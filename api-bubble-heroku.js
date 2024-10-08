@@ -2,8 +2,6 @@ const express = require('express');
 const { Pool } = require('pg');
 const app = express();
 
-// Insertion d'un texte pour tester le versioning sur Git et Github
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
