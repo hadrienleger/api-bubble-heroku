@@ -14,7 +14,7 @@ app.post('/find-iris', async (req, res) => {
   
   try {
     const query = `
-      SELECT code_iris, nom_iris
+      SELECT code_iris, nom_iris, nom_com
       FROM sources.iris_ign_2023
       WHERE ST_DWithin(
         geography(geom),
