@@ -23,11 +23,14 @@ app.post('/find-iris', async (req, res) => {
       );
     `;
     
+    console.time('query');
     const result = await pool.query(query, [latitude, longitude, radius]);
-    
+    console.timeEnd('query');
+    console.log(`Nombre d'IRIS trouvés : ${result.rows.length}`);
+
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
+    console.error('Erreur lors de la requête :', err);
     res.status(500).json({ error: 'Une erreur est survenue lors de la recherche des IRIS' });
   }
 });
