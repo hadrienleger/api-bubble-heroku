@@ -24,7 +24,13 @@ app.post('/find-iris', async (req, res) => {
     `;
     
     console.time('query');
-    const result = await pool.query(query, [latitude, longitude, radius]);
+
+    const result = await pool.query(query, [
+      parseFloat(latitude), 
+      parseFloat(longitude), 
+      parseFloat(radius)
+    ]);
+
     console.timeEnd('query');
     console.log(`Nombre d'IRIS trouvés : ${result.rows.length}`);
 
