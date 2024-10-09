@@ -34,3 +34,7 @@ app.post('/find-iris', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Serveur démarré sur le port ${PORT}`));
+
+console.time('query');
+const result = await pool.query(query, [latitude, longitude, radius]);
+console.timeEnd('query');
