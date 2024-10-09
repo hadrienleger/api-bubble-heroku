@@ -19,8 +19,8 @@ app.post('/find-iris', async (req, res) => {
         SELECT code_iris, nom_iris
         FROM sources.iris_ign_2023
         WHERE ST_DWithin(
-          geom::geography,
-          ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+          geography(geom),
+          ST_MakePoint($2, $1)::geography,
           $3 * 1000
         )
       )
