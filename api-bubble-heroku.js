@@ -25,7 +25,7 @@ app.post('/get_iris', async (req, res) => {
       const { latitude, longitude, radius } = params;
 
       query = `
-        SELECT code_iris, nom_iris
+        SELECT code_iris, nom_iris, nom_com
         FROM sources.iris_ign_2023
         WHERE ST_DWithin(
           geom,
@@ -41,13 +41,13 @@ app.post('/get_iris', async (req, res) => {
 
       if (code_type === 'com') {
         query = `
-          SELECT code_iris, nom_iris
+          SELECT code_iris, nom_iris, nom_com
           FROM sources.iris_ign_2023
           WHERE com = ANY($1)
         `;
       } else if (code_type === 'dep') {
         query = `
-          SELECT code_iris, nom_iris
+          SELECT code_iris, nom_iris, nom_com
           FROM sources.iris_ign_2023
           WHERE dep = ANY($1)
         `;
