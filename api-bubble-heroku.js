@@ -25,14 +25,15 @@ app.post('/get_iris', async (req, res) => {
       const { latitude, longitude, radius } = params;
 
       query = `
-        SELECT code_iris, nom_iris, nom_com
-        FROM sources.iris_ign_2023
-        WHERE ST_DWithin(
-          geom,
-          ST_Transform(ST_SetSRID(ST_MakePoint($1, $2), 4326), ST_SRID(geom)),
-          $3
-        )
-      `;
+      SELECT code_iris, nom_iris, nom_com
+      FROM sources.iris_ign_2023
+      WHERE ST_DWithin(
+        geography(geom),
+        ST_MakePoint($2, $1)::geography,
+        $3 * 1000
+      )
+    `;
+
       values = [parseFloat(longitude), parseFloat(latitude), parseFloat(radius) * 1000]; // Rayon en mètres
 
     } else if (method === 'codes') {
