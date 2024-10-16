@@ -21,20 +21,23 @@ app.post('/get_iris', async (req, res) => {
     let values = [];
 
     if (method === 'circle') {
-      // Méthode 1 : Recherche par cercle
+    // Méthode 1 : Recherche par cercle (Version n°2)
       const { latitude, longitude, radius } = params;
 
       query = `
-      SELECT code_iris, nom_iris, nom_com
-      FROM sources.iris_ign_2023
-      WHERE ST_DWithin(
-        geography(geom),
-        ST_MakePoint($1, $2)::geography,
-        $3 * 1000
-      )
-    `;
-
-      values = [parseFloat(longitude), parseFloat(latitude), parseFloat(radius) * 1000]; // Rayon en mètres
+        SELECT code_iris, nom_iris, nom_com
+        FROM sources.iris_ign_2023
+        WHERE ST_DWithin(
+          geography(geom),
+          ST_MakePoint($2, $1)::geography,
+          $3 * 1000
+        )
+      `;
+      values = [
+        parseFloat(latitude),
+        parseFloat(longitude),
+        parseFloat(radius)
+      ];
 
     } else if (method === 'codes') {
       // Méthode 2 : Sélection par codes de communes ou départements
