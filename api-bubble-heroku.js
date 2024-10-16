@@ -70,6 +70,7 @@ app.post('/get_iris', async (req, res) => {
     const irisList = result.rows.map(row => ({
       code_iris: row.code_iris,
       nom_iris: row.nom_iris,
+      nom_com: row.nom_com,
     }));
 
     res.json({ iris: irisList });
