@@ -1,7 +1,7 @@
 {
   "name": "api-bubble-heroku",
   "version": "1.0.0",
-  "main": "server.js",
+  "main": "api-bubble-heroku.js",
   "scripts": {
     "start": "node api-bubble-heroku.js"
   },
