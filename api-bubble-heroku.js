@@ -29,7 +29,7 @@ app.post('/get_iris', async (req, res) => {
       FROM sources.iris_ign_2023
       WHERE ST_DWithin(
         geography(geom),
-        ST_MakePoint($2, $1)::geography,
+        ST_MakePoint($1, $2)::geography,
         $3 * 1000
       )
     `;
