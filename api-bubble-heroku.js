@@ -5,11 +5,17 @@ const cors = require('cors');
 const app = express();
 const { Pool } = require('pg');
 
+// Charger les variables d'environnement en développement
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+
 // Configuration de la connexion à la base de données PostgreSQL
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres@localhost:5432/module_quartier', // Normalement pas de mot de passe en local
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+  connectionString: process.env.DATABASE_URL,
+  ssl: false // Pas de SSL en local
 });
+
 
 app.use(express.json());
 app.use(cors());
