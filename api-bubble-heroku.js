@@ -51,7 +51,7 @@ app.post('/get_iris', async (req, res) => {
 
       // Filtre sur le type de bien
       if (criteria.propertyTypes && criteria.propertyTypes.length > 0) {
-        criteriaWhereClauses.push(`codtypbien = ANY($${valueIndex})`);
+        criteriaWhereClauses.push(`codtyploc = ANY($${valueIndex})`);
         values.push(criteria.propertyTypes);
         valueIndex += 1;
       }
