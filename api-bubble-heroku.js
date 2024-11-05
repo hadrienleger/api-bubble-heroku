@@ -122,7 +122,7 @@ app.post('/get_iris', async (req, res) => {
       )
       SELECT si.code_iris, i.nom_iris, i.nom_com, i.insee_com
       FROM selected_iris si
-      JOIN sources.iris_ign_2023 i ON si.code_iris = i.code_iris
+      JOIN iris.iris_ign_2023 i ON si.code_iris = i.code_iris
     `;
 
     console.time('query');
