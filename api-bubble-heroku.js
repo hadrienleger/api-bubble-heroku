@@ -12,7 +12,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Configuration de la connexion à la base de données PostgreSQL
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.ZENMAP_DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
