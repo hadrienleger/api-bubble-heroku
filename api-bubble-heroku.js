@@ -126,7 +126,7 @@ app.post('/get_iris', async (req, res) => {
       query = `
         WITH location_filtered AS (
           SELECT *
-          FROM dvf_filtre.table_simplifiee
+          FROM dvf_filtre.dvf_simplified_23
           WHERE ${locationCondition}
         )
         SELECT DISTINCT code_iris_wgs84 AS code_iris
@@ -154,7 +154,7 @@ app.post('/get_iris', async (req, res) => {
       query = `
         WITH location_filtered AS (
           SELECT *
-          FROM dvf_filtre.table_simplifiee
+          FROM dvf_filtre.dvf_simplified_23
           WHERE ${locationCondition}
         )
         SELECT DISTINCT code_iris_wgs84 AS code_iris
