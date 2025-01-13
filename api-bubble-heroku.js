@@ -327,7 +327,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
 
     // ----------------------------------------------------
     // F) Critère collèges => criteria.colleges
-    //    table pivot : idcar200m_rne_classement_2023
+    //    table pivot : idcar200m_rne_niveaucolleges
     //    champ valeur_avec_va_figaro
     // ----------------------------------------------------
     if (criteria && criteria.colleges) {
@@ -349,7 +349,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       if (wf.length>0) {
         const queryColl = `
           SELECT DISTINCT id_carre_200m
-          FROM education_colleges.idcar200m_rne_classement_2023
+          FROM education_colleges.idcar200m_rne_niveaucolleges
           WHERE ${wf.join(' AND ')}
         `;
         let resColl = await pool.query(queryColl, vf);
