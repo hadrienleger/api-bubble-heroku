@@ -328,7 +328,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     // ----------------------------------------------------
     // F) Critère collèges => criteria.colleges
     //    table pivot : idcar200m_rne_niveaucolleges
-    //    champ niveau_colleges_figaro
+    //    champ niveau_college_figaro
     // ----------------------------------------------------
     if (criteria && criteria.colleges) {
       console.time('F) Colleges');
@@ -337,12 +337,12 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       let ic = 1;
 
       if (criteria.colleges.valeur_figaro_min != null) {
-        wf.push(`niveau_colleges_figaro >= $${ic}`);
+        wf.push(`niveau_college_figaro >= $${ic}`);
         vf.push(criteria.colleges.valeur_figaro_min);
         ic++;
       }
       if (criteria.colleges.valeur_figaro_max != null) {
-        wf.push(`niveau_colleges_figaro <= $${ic}`);
+        wf.push(`niveau_college_figaro <= $${ic}`);
         vf.push(criteria.colleges.valeur_figaro_max);
         ic++;
       }
