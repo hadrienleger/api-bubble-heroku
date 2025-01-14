@@ -40,7 +40,7 @@ app.get('/ping', (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// 1) Fonction utilitaire d'intersection de tableaux
+// 1) Intersection utilitaire
 // ---------------------------------------------------------------------
 function intersectArrays(arrA, arrB) {
   const setB = new Set(arrB);
@@ -48,11 +48,10 @@ function intersectArrays(arrA, arrB) {
 }
 
 // ---------------------------------------------------------------------
-// 2) Fonction utilitaire : convertir liste de départements
-//    en liste de communes (ou arrondissements pour Paris, Lyon, Marseille).
+// 2) Convertir départements -> communes
+//    Gérer arrondissements (75, 69, 13) si besoin
 // ---------------------------------------------------------------------
 async function getCommunesFromDepartements(depCodes) {
-  // depCodes = ["75","13","69", ...]
   let allCommunes = [];
 
   for (let dep of depCodes) {
@@ -73,11 +72,10 @@ async function getCommunesFromDepartements(depCodes) {
     let result = await pool.query(query, val);
     console.timeEnd(`getCommunesFromDep-${dep}`);
     let communesDep = result.rows.map(r => r.commune);
-
     allCommunes = [...allCommunes, ...communesDep];
   }
 
-  return Array.from(new Set(allCommunes)); // unique
+  return Array.from(new Set(allCommunes)); // supprime doublons
 }
 
 // ---------------------------------------------------------------------
@@ -88,27 +86,23 @@ app.post('/get_carreaux_filtre', async (req, res) => {
   console.time('TOTAL /get_carreaux_filtre');
 
   try {
-    // On récupère params et criteria
     const { params, criteria } = req.body;
-    // params = { code_type, codes }
-    // criteria = { insecurite, dvf, filosofi, colleges, ecoles }
-
-    // ----------------------------------------------------
-    // A) Récupération de la liste de communes
-    // ----------------------------------------------------
-    console.time('A) localiser communes');
-    let communesSelection = [];
     if (!params || !params.code_type || !params.codes) {
+      console.error('Paramètres localisation manquants');
       return res.status(400).json({ error: 'Paramètres de localisation manquants.' });
     }
 
     const { code_type, codes } = params;
+    let communesSelection = [];
 
+    // ----------------------------------------------------
+    // A) Obtenir la liste de communes
+    // ----------------------------------------------------
+    console.time('A) localiser communes');
     if (code_type === 'com') {
       communesSelection = codes;
     } else if (code_type === 'dep') {
-      // Convertir départements -> communes
-      communesSelection = [];
+      // Convertir dep -> communes
       let allCom = [];
       for (let dep of codes) {
         let communesDep = await getCommunesFromDepartements([dep]);
@@ -116,21 +110,20 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       }
       communesSelection = Array.from(new Set(allCom));
     } else {
-      return res.status(400).json({ error: 'code_type invalide, doit être "com" ou "dep".' });
+      return res.status(400).json({ error: 'code_type doit être "com" ou "dep".' });
     }
     console.log('=> communesSelection.length =', communesSelection.length);
     console.timeEnd('A) localiser communes');
 
     if (communesSelection.length === 0) {
-      // aucune commune => on arrête
       console.timeEnd('TOTAL /get_carreaux_filtre');
       return res.json({ nb_carreaux: 0, carreaux: [] });
     }
 
     // ----------------------------------------------------
-    // B) Filtre insécurité => intersection de communes
+    // B) Filtre insécurité -> intersection de communes
     // ----------------------------------------------------
-    let communesFinal = communesSelection; 
+    let communesFinal = communesSelection;
     if (criteria && criteria.insecurite && criteria.insecurite.min != null) {
       console.time('B) insecurite query');
       const queryIns = `
@@ -139,13 +132,12 @@ app.post('/get_carreaux_filtre', async (req, res) => {
         WHERE note_sur_20 >= $1
       `;
       const valIns = [criteria.insecurite.min];
-      const resIns = await pool.query(queryIns, valIns);
+      let resIns = await pool.query(queryIns, valIns);
       console.timeEnd('B) insecurite query');
 
       let communesInsecOk = resIns.rows.map(r => r.insee_com);
       console.log('=> communesInsecOk.length =', communesInsecOk.length);
 
-      // Intersection
       console.time('B) intersection communes insecurite');
       communesFinal = intersectArrays(communesFinal, communesInsecOk);
       console.timeEnd('B) intersection communes insecurite');
@@ -153,7 +145,6 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     }
 
     if (communesFinal.length === 0) {
-      // plus aucune commune => 0 carreaux
       console.timeEnd('TOTAL /get_carreaux_filtre');
       return res.json({ nb_carreaux: 0, carreaux: [] });
     }
@@ -170,6 +161,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     const valCarrLoc = [communesFinal];
     let resCarrLoc = await pool.query(queryCarrLoc, valCarrLoc);
     console.timeEnd('C) grille200m query');
+
     let arrayCarreLoc = resCarrLoc.rows.map(r => r.id_carre_200m);
     console.log('=> arrayCarreLoc.length =', arrayCarreLoc.length);
 
@@ -178,13 +170,13 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       return res.json({ nb_carreaux: 0, carreaux: [] });
     }
 
-    // On stocke ce set dans un array pour l'intersection finale
+    // On aura besoin de faire intersection finale
     let setsOfCarreaux = [];
-    setsOfCarreaux.push(arrayCarreLoc);
+    setsOfCarreaux.push(arrayCarreLoc); // le set de base localisation+insecurite
 
     // ----------------------------------------------------
-    // D) Critère DVF => criteria.dvf
-    //    propertyTypes, budget, surface, rooms, years
+    // D) Critère DVF => filtrer dvf_simplifie 
+    //    seulement sur id_carre_200m = ANY(arrayCarreLoc)
     // ----------------------------------------------------
     if (criteria && criteria.dvf) {
       console.time('D) DVF build query');
@@ -192,7 +184,12 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       let values = [];
       let idx = 1;
 
-      // propertyTypes => [maison,appartement]
+      // 1) Filtrer sur id_carre_200m
+      whereClauses.push(`id_carre_200m = ANY($${idx})`);
+      values.push(arrayCarreLoc);
+      idx++;
+
+      // propertyTypes
       if (criteria.dvf.propertyTypes && criteria.dvf.propertyTypes.length>0) {
         let codesDVF = [];
         if (criteria.dvf.propertyTypes.includes('maison')) codesDVF.push('111');
@@ -256,34 +253,37 @@ app.post('/get_carreaux_filtre', async (req, res) => {
         }
       }
 
-      if (whereClauses.length>0) {
-        const whDVF = 'WHERE ' + whereClauses.join(' AND ');
-        const queryDVF = `
-          SELECT DISTINCT id_carre_200m
-          FROM dvf_filtre.dvf_simplifie
-          ${whDVF}
-        `;
-        console.timeEnd('D) DVF build query');
-        console.time('D) DVF exec query');
-        let resDVF = await pool.query(queryDVF, values);
-        console.timeEnd('D) DVF exec query');
-        let arrDVF = resDVF.rows.map(r => r.id_carre_200m);
-        console.log('=> DVF rowCount =', arrDVF.length);
-        setsOfCarreaux.push(arrDVF);
-      } else {
-        console.timeEnd('D) DVF build query');
-      }
+      const whDVF = 'WHERE ' + whereClauses.join(' AND ');
+      const queryDVF = `
+        SELECT DISTINCT id_carre_200m
+        FROM dvf_filtre.dvf_simplifie
+        ${whDVF}
+      `;
+      console.timeEnd('D) DVF build query');
+
+      console.time('D) DVF exec query');
+      let resDVF = await pool.query(queryDVF, values);
+      console.timeEnd('D) DVF exec query');
+
+      let arrDVF = resDVF.rows.map(r => r.id_carre_200m);
+      console.log('=> DVF rowCount =', arrDVF.length);
+
+      setsOfCarreaux.push(arrDVF);
     }
 
     // ----------------------------------------------------
-    // E) Critère Filosofi => criteria.filosofi
-    //    nv_moyen, part_log_soc
+    // E) Filosofi => filtrer sur arrayCarreLoc + nv_moyen + part_log_soc
     // ----------------------------------------------------
     if (criteria && criteria.filosofi) {
       console.time('E) Filosofi');
       let whereFilo = [];
       let valFilo = [];
       let iF = 1;
+
+      // 1) Filtrer par id_carre_200m
+      whereFilo.push(`idcar_200m = ANY($${iF})`);
+      valFilo.push(arrayCarreLoc);
+      iF++;
 
       if (criteria.filosofi.nv_moyen) {
         if (criteria.filosofi.nv_moyen.min != null) {
@@ -326,15 +326,18 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     }
 
     // ----------------------------------------------------
-    // F) Critère collèges => criteria.colleges
-    //    table pivot : idcar200m_rne_niveaucolleges
-    //    champ niveau_college_figaro
+    // F) Collèges => filtrer sur arrayCarreLoc + niveau_college_figaro
     // ----------------------------------------------------
     if (criteria && criteria.colleges) {
       console.time('F) Colleges');
       let wf = [];
       let vf = [];
       let ic = 1;
+
+      // 1) Filtrer par id_carre_200m
+      wf.push(`id_carre_200m = ANY($${ic})`);
+      vf.push(arrayCarreLoc);
+      ic++;
 
       if (criteria.colleges.valeur_figaro_min != null) {
         wf.push(`niveau_college_figaro >= $${ic}`);
@@ -346,6 +349,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
         vf.push(criteria.colleges.valeur_figaro_max);
         ic++;
       }
+
       if (wf.length>0) {
         const queryColl = `
           SELECT DISTINCT id_carre_200m
@@ -361,14 +365,18 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     }
 
     // ----------------------------------------------------
-    // G) Critère écoles => criteria.ecoles
-    //    table pivot : idcar200m_rne_ipsecoles => champ ips
+    // G) Écoles => filtrer sur arrayCarreLoc + ips
     // ----------------------------------------------------
     if (criteria && criteria.ecoles) {
       console.time('G) Ecoles');
       let wE = [];
       let vE = [];
       let iE = 1;
+
+      // 1) Filtrer par id_carre_200m
+      wE.push(`id_carre_200m = ANY($${iE})`);
+      vE.push(arrayCarreLoc);
+      iE++;
 
       if (criteria.ecoles.ips_min != null) {
         wE.push(`ips >= $${iE}`);
@@ -400,7 +408,6 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     // ----------------------------------------------------
     console.time('H) Intersection');
     if (setsOfCarreaux.length === 0) {
-      // aucun set => pas de filtrage => 0
       console.timeEnd('H) Intersection');
       console.timeEnd('TOTAL /get_carreaux_filtre');
       return res.json({ nb_carreaux: 0, carreaux: [] });
