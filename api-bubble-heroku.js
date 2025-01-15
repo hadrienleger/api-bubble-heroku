@@ -1,9 +1,12 @@
 /****************************************************
  * Fichier : api-bubble-heroku.js
  * 
- * Utilisation en local :
+ * Usage local :
  *   1) npm install
  *   2) npm start
+ * Déploiement Heroku :
+ *   - Soit via Procfile : "web: node api-bubble-heroku.js"
+ *   - Soit via script "start": "node api-bubble-heroku.js" dans package.json
  ****************************************************/
 
 const express = require('express');
@@ -53,7 +56,6 @@ function intersectArrays(arrA, arrB) {
 // ---------------------------------------------------------------------
 async function getCommunesFromDepartements(depCodes) {
   let allCommunes = [];
-
   for (let dep of depCodes) {
     const query = `
       SELECT DISTINCT
@@ -75,7 +77,7 @@ async function getCommunesFromDepartements(depCodes) {
     allCommunes = [...allCommunes, ...communesDep];
   }
 
-  return Array.from(new Set(allCommunes)); // supprime doublons
+  return Array.from(new Set(allCommunes));
 }
 
 // ---------------------------------------------------------------------
@@ -84,11 +86,9 @@ async function getCommunesFromDepartements(depCodes) {
 app.post('/get_carreaux_filtre', async (req, res) => {
   console.log('=== START /get_carreaux_filtre ===');
   console.time('TOTAL /get_carreaux_filtre');
-
   try {
     const { params, criteria } = req.body;
     if (!params || !params.code_type || !params.codes) {
-      console.error('Paramètres localisation manquants');
       return res.status(400).json({ error: 'Paramètres de localisation manquants.' });
     }
 
@@ -102,11 +102,10 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     if (code_type === 'com') {
       communesSelection = codes;
     } else if (code_type === 'dep') {
-      // Convertir dep -> communes
       let allCom = [];
       for (let dep of codes) {
-        let communesDep = await getCommunesFromDepartements([dep]);
-        allCom = [...allCom, ...communesDep];
+        let comDep = await getCommunesFromDepartements([dep]);
+        allCom = [...allCom, ...comDep];
       }
       communesSelection = Array.from(new Set(allCom));
     } else {
@@ -130,8 +129,9 @@ app.post('/get_carreaux_filtre', async (req, res) => {
         SELECT insee_com
         FROM delinquance.notes_insecurite_geom_complet
         WHERE note_sur_20 >= $1
+          AND insee_com = ANY($2)
       `;
-      const valIns = [criteria.insecurite.min];
+      const valIns = [criteria.insecurite.min, communesSelection];
       let resIns = await pool.query(queryIns, valIns);
       console.timeEnd('B) insecurite query');
 
@@ -139,7 +139,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       console.log('=> communesInsecOk.length =', communesInsecOk.length);
 
       console.time('B) intersection communes insecurite');
-      communesFinal = intersectArrays(communesFinal, communesInsecOk);
+      communesFinal = intersectArrays(communesSelection, communesInsecOk);
       console.timeEnd('B) intersection communes insecurite');
       console.log('=> communesFinal (after insecurite) =', communesFinal.length);
     }
@@ -170,9 +170,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       return res.json({ nb_carreaux: 0, carreaux: [] });
     }
 
-    // On aura besoin de faire intersection finale
-    let setsOfCarreaux = [];
-    setsOfCarreaux.push(arrayCarreLoc); // le set de base localisation+insecurite
+    let setsOfCarreaux = [arrayCarreLoc];
 
     // ----------------------------------------------------
     // D) Critère DVF => filtrer dvf_simplifie 
@@ -189,7 +187,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       values.push(arrayCarreLoc);
       idx++;
 
-      // propertyTypes
+      // propertyTypes ...
       if (criteria.dvf.propertyTypes && criteria.dvf.propertyTypes.length>0) {
         let codesDVF = [];
         if (criteria.dvf.propertyTypes.includes('maison')) codesDVF.push('111');
@@ -267,7 +265,6 @@ app.post('/get_carreaux_filtre', async (req, res) => {
 
       let arrDVF = resDVF.rows.map(r => r.id_carre_200m);
       console.log('=> DVF rowCount =', arrDVF.length);
-
       setsOfCarreaux.push(arrDVF);
     }
 
@@ -334,7 +331,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       let vf = [];
       let ic = 1;
 
-      // 1) Filtrer par id_carre_200m
+      // Filtrer par id_carre_200m
       wf.push(`id_carre_200m = ANY($${ic})`);
       vf.push(arrayCarreLoc);
       ic++;
@@ -373,7 +370,6 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       let vE = [];
       let iE = 1;
 
-      // 1) Filtrer par id_carre_200m
       wE.push(`id_carre_200m = ANY($${iE})`);
       vE.push(arrayCarreLoc);
       iE++;
@@ -421,10 +417,54 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     console.timeEnd('H) Intersection');
 
     console.timeEnd('TOTAL /get_carreaux_filtre');
-    return res.json({
+
+    // On construit la réponse principale
+    let finalResponse = {
       nb_carreaux: intersectionSet.length,
       carreaux: intersectionSet
-    });
+    };
+
+    // I) Communes regroupement : renvoyer nb de carreaux par commune
+    if (intersectionSet.length > 0) {
+      console.time('I) Communes regroupement');
+      const queryCommunes = `
+        WITH final_ids AS (
+          SELECT unnest($1::text[]) AS id
+        ),
+        expanded AS (
+          SELECT unnest(g.insee_com) AS insee
+          FROM decoupages.grille200m_metropole g
+          JOIN final_ids f ON g.idinspire = f.id
+        )
+        SELECT
+          e.insee AS insee_com,
+          c.nom AS nom_com,
+          c.insee_dep,
+          c.nom_dep,
+          COUNT(*) AS nb_carreaux
+        FROM expanded e
+        JOIN decoupages.communes c ON c.insee_com = e.insee
+        GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
+        ORDER BY nb_carreaux DESC
+      `;
+      const valuesComm = [intersectionSet];
+      const communesResult = await pool.query(queryCommunes, valuesComm);
+
+      console.timeEnd('I) Communes regroupement');
+      console.log('=> Nombre de communes distinctes =', communesResult.rowCount);
+
+      let communesData = communesResult.rows.map(row => ({
+        insee_com: row.insee_com,
+        nom_com: row.nom_com,
+        insee_dep: row.insee_dep,
+        nom_dep: row.nom_dep,
+        nb_carreaux: Number(row.nb_carreaux)
+      }));
+
+      finalResponse.communes = communesData;
+    }
+
+    return res.json(finalResponse);
 
   } catch (error) {
     console.error('Erreur dans /get_carreaux_filtre :', error);
@@ -433,7 +473,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
   }
 });
 
-// Démarrer le serveur
+// Lancement serveur
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`API démarrée sur le port ${PORT}`);
