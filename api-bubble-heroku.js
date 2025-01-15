@@ -84,6 +84,7 @@ async function getCommunesFromDepartements(depCodes) {
 // 3) POST /get_carreaux_filtre
 // ---------------------------------------------------------------------
 app.post('/get_carreaux_filtre', async (req, res) => {
+  console.log('>>> BODY RECEIVED FROM BUBBLE:', JSON.stringify(req.body, null, 2));
   console.log('=== START /get_carreaux_filtre ===');
   console.time('TOTAL /get_carreaux_filtre');
   try {
