@@ -187,17 +187,14 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       values.push(arrayCarreLoc);
       idx++;
 
-      // propertyTypes ...
-      if (criteria.dvf.propertyTypes && criteria.dvf.propertyTypes.length>0) {
-        let codesDVF = [];
-        if (criteria.dvf.propertyTypes.includes('maison')) codesDVF.push('111');
-        if (criteria.dvf.propertyTypes.includes('appartement')) codesDVF.push('121');
-        if (codesDVF.length>0) {
-          whereClauses.push(`codtypbien = ANY($${idx})`);
-          values.push(codesDVF);
-          idx++;
-        }
+      // propertyTypes => Bubble enverra directement les valeurs numériques : 1 pour maison, 2 pour appartement
+      if (criteria.dvf.propertyTypes && criteria.dvf.propertyTypes.length > 0) {
+        // On suppose que criteria.dvf.propertyTypes est déjà un tableau de nombres : [1,2], [1], ou [2]
+        whereClauses.push(`codtyploc = ANY($${idx})`);
+        values.push(criteria.dvf.propertyTypes); // on push directement le tableau (ex. [1,2])
+        idx++;
       }
+
       // budget
       if (criteria.dvf.budget) {
         if (criteria.dvf.budget.min != null) {
