@@ -412,10 +412,6 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       intersectionSet = intersectArrays(intersectionSet, setsOfCarreaux[i]);
       if (intersectionSet.length === 0) break;
     }
-
-    // Retirer les doublons finaux dans le résultat de l'intersection
-    intersectionSet = Array.from(new Set(intersectionSet));
-    
     console.timeEnd('H) Intersection');
 
     console.timeEnd('TOTAL /get_carreaux_filtre');
