@@ -469,6 +469,13 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       finalResponse.communes = communesData;
     }
 
+  // Ajout d'un console.log sur le nombre final de communes pour voir si Bubble récupère bien les résultats de l'API (et la cause des "empty" côté Bubble)
+  if (finalResponse.communes) {
+    console.log(`--> nb_communes distinct = ${finalResponse.communes.length}`);
+  }
+  console.log(`--> nb_carreaux found = ${intersectionSet.length}`);
+
+
     return res.json(finalResponse);
 
   } catch (error) {
