@@ -43,16 +43,59 @@ app.get('/ping', (req, res) => {
 });
 
 // ---------------------------------------------------------------------
-// 1) Intersection utilitaire
+// 1) Fonctions utilitaires pour arrays
 // ---------------------------------------------------------------------
 function intersectArrays(arrA, arrB) {
   const setB = new Set(arrB);
   return arrA.filter(x => setB.has(x));
 }
+function unionArrays(arrA, arrB) {
+  const setA = new Set(arrA);
+  for (const x of arrB) {
+    setA.add(x);
+  }
+  return Array.from(setA);
+}
+function differenceArrays(arrA, arrB) {
+  const setB = new Set(arrB);
+  return arrA.filter(x => !setB.has(x));
+}
 
 // ---------------------------------------------------------------------
-// 2) Convertir départements -> communes
-//    Gérer arrondissements (75, 69, 13) si besoin
+// 2) Détection de l'activation des critères
+// ---------------------------------------------------------------------
+function isDVFActivated(dvf) {
+  if (!dvf) return false;
+  const hasPropertyTypes = dvf.propertyTypes && dvf.propertyTypes.length > 0;
+  const hasBudget = dvf.budget && (dvf.budget.min != null || dvf.budget.max != null);
+  const hasSurface = dvf.surface && (dvf.surface.min != null || dvf.surface.max != null);
+  const hasRooms = dvf.rooms && (dvf.rooms.min != null || dvf.rooms.max != null);
+  const hasYears = dvf.years && (dvf.years.min != null || dvf.years.max != null);
+  return (hasPropertyTypes || hasBudget || hasSurface || hasRooms || hasYears);
+}
+function isFilosofiActivated(filo) {
+  if (!filo) return false;
+  const hasNv = filo.nv_moyen && (filo.nv_moyen.min != null || filo.nv_moyen.max != null);
+  const hasPart = filo.part_log_soc && (filo.part_log_soc.min != null || filo.part_log_soc.max != null);
+  return (hasNv || hasPart);
+}
+function isCollegesActivated(col) {
+  if (!col) return false;
+  if (col.valeur_figaro_min != null || col.valeur_figaro_max != null) {
+    return true;
+  }
+  return false;
+}
+function isEcolesActivated(ec) {
+  if (!ec) return false;
+  if (ec.ips_min != null || ec.ips_max != null) {
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------
+// 3) Helpers : getCommunesFromDepartements (inchangé)
 // ---------------------------------------------------------------------
 async function getCommunesFromDepartements(depCodes) {
   let allCommunes = [];
@@ -70,412 +113,501 @@ async function getCommunesFromDepartements(depCodes) {
         AND c.insee_com IS NOT NULL
     `;
     const val = [dep];
+
     console.time(`getCommunesFromDep-${dep}`);
     let result = await pool.query(query, val);
     console.timeEnd(`getCommunesFromDep-${dep}`);
-    let communesDep = result.rows.map(r => r.commune);
-    allCommunes = [...allCommunes, ...communesDep];
-  }
 
+    let communesDep = result.rows.map(r => r.commune);
+    allCommunes.push(...communesDep);
+  }
   return Array.from(new Set(allCommunes));
 }
 
 // ---------------------------------------------------------------------
-// 3) POST /get_carreaux_filtre
+// 4) getCarresLocalisationAndInsecurite
+// ---------------------------------------------------------------------
+async function getCarresLocalisationAndInsecurite(params, criteria) {
+  const { code_type, codes } = params;
+  let communesSelection = [];
+
+  // A) Obtenir la liste de communes
+  console.time('A) localiser communes');
+  if (code_type === 'com') {
+    communesSelection = codes;
+  } else if (code_type === 'dep') {
+    let allCom = [];
+    for (let dep of codes) {
+      let comDep = await getCommunesFromDepartements([dep]);
+      allCom = [...allCom, ...comDep];
+    }
+    communesSelection = Array.from(new Set(allCom));
+  } else {
+    throw new Error('code_type doit être "com" ou "dep".');
+  }
+  console.log('=> communesSelection.length =', communesSelection.length);
+  console.timeEnd('A) localiser communes');
+
+  if (!communesSelection.length) {
+    return [];
+  }
+
+  // B) insécurité (intersection)
+  if (criteria && criteria.insecurite && criteria.insecurite.min != null) {
+    console.time('B) insecurite query');
+    const queryIns = `
+      SELECT insee_com
+      FROM delinquance.notes_insecurite_geom_complet
+      WHERE note_sur_20 >= $1
+        AND insee_com = ANY($2)
+    `;
+    const valIns = [criteria.insecurite.min, communesSelection];
+    let resIns = await pool.query(queryIns, valIns);
+    console.timeEnd('B) insecurite query');
+
+    let communesInsecOk = resIns.rows.map(r => r.insee_com);
+    console.log('=> communesInsecOk.length =', communesInsecOk.length);
+
+    console.time('B) intersection communes insecurite');
+    communesSelection = intersectArrays(communesSelection, communesInsecOk);
+    console.timeEnd('B) intersection communes insecurite');
+    console.log('=> communesFinal (after insecurite) =', communesSelection.length);
+
+    if (!communesSelection.length) {
+      return [];
+    }
+  }
+
+  // C) grille200m => arrayCarreLoc
+  console.time('C) grille200m query');
+  const queryCarrLoc = `
+    SELECT idinspire AS id_carre_200m
+    FROM decoupages.grille200m_metropole
+    WHERE insee_com && $1
+  `;
+  const valCarrLoc = [communesSelection];
+  let resCarrLoc = await pool.query(queryCarrLoc, valCarrLoc);
+  console.timeEnd('C) grille200m query');
+
+  let arrayCarreLoc = resCarrLoc.rows.map(r => r.id_carre_200m);
+  console.log('=> arrayCarreLoc.length =', arrayCarreLoc.length);
+
+  return arrayCarreLoc;
+}
+
+// ---------------------------------------------------------------------
+// 5) Intersection stricte : DVF, Filosofi
+// ---------------------------------------------------------------------
+async function applyDVF(arrayCarreLoc, dvfCriteria) {
+  if (!isDVFActivated(dvfCriteria)) {
+    return arrayCarreLoc;
+  }
+  console.time('D) DVF build query');
+  let whereClauses = [];
+  let values = [];
+  let idx = 1;
+
+  whereClauses.push(`id_carre_200m = ANY($${idx})`);
+  values.push(arrayCarreLoc);
+  idx++;
+
+  if (dvfCriteria.propertyTypes && dvfCriteria.propertyTypes.length > 0) {
+    whereClauses.push(`codtyploc = ANY($${idx})`);
+    values.push(dvfCriteria.propertyTypes);
+    idx++;
+  }
+
+  if (dvfCriteria.budget) {
+    if (dvfCriteria.budget.min != null) {
+      whereClauses.push(`valeurfonc >= $${idx}`);
+      values.push(dvfCriteria.budget.min);
+      idx++;
+    }
+    if (dvfCriteria.budget.max != null) {
+      whereClauses.push(`valeurfonc <= $${idx}`);
+      values.push(dvfCriteria.budget.max);
+      idx++;
+    }
+  }
+
+  if (dvfCriteria.surface) {
+    if (dvfCriteria.surface.min != null) {
+      whereClauses.push(`sbati >= $${idx}`);
+      values.push(dvfCriteria.surface.min);
+      idx++;
+    }
+    if (dvfCriteria.surface.max != null) {
+      whereClauses.push(`sbati <= $${idx}`);
+      values.push(dvfCriteria.surface.max);
+      idx++;
+    }
+  }
+
+  if (dvfCriteria.rooms) {
+    if (dvfCriteria.rooms.min != null) {
+      whereClauses.push(`nbpprinc >= $${idx}`);
+      values.push(dvfCriteria.rooms.min);
+      idx++;
+    }
+    if (dvfCriteria.rooms.max != null) {
+      whereClauses.push(`nbpprinc <= $${idx}`);
+      values.push(dvfCriteria.rooms.max);
+      idx++;
+    }
+  }
+
+  if (dvfCriteria.years) {
+    if (dvfCriteria.years.min != null) {
+      whereClauses.push(`anneemut >= $${idx}`);
+      values.push(dvfCriteria.years.min);
+      idx++;
+    }
+    if (dvfCriteria.years.max != null) {
+      whereClauses.push(`anneemut <= $${idx}`);
+      values.push(dvfCriteria.years.max);
+      idx++;
+    }
+  }
+  console.timeEnd('D) DVF build query');
+
+  const whDVF = 'WHERE ' + whereClauses.join(' AND ');
+  const queryDVF = `
+    SELECT DISTINCT id_carre_200m
+    FROM dvf_filtre.dvf_simplifie
+    ${whDVF}
+  `;
+
+  console.time('D) DVF exec query');
+  let resDVF = await pool.query(queryDVF, values);
+  console.timeEnd('D) DVF exec query');
+
+  let arrDVF = resDVF.rows.map(r => r.id_carre_200m);
+  console.log('=> DVF rowCount =', arrDVF.length);
+
+  console.time('D) DVF intersection');
+  let result = intersectArrays(arrayCarreLoc, arrDVF);
+  console.timeEnd('D) DVF intersection');
+  console.log('=> after DVF intersectionSet.length =', result.length);
+
+  return result;
+}
+
+async function applyFilosofi(arrayCarreLoc, filo) {
+  if (!isFilosofiActivated(filo)) {
+    return arrayCarreLoc;
+  }
+  console.time('E) Filosofi');
+  let whereFilo = [];
+  let valFilo = [];
+  let iF = 1;
+
+  whereFilo.push(`idcar_200m = ANY($${iF})`);
+  valFilo.push(arrayCarreLoc);
+  iF++;
+
+  if (filo.nv_moyen) {
+    if (filo.nv_moyen.min != null) {
+      whereFilo.push(`nv_moyen >= $${iF}`);
+      valFilo.push(filo.nv_moyen.min);
+      iF++;
+    }
+    if (filo.nv_moyen.max != null) {
+      whereFilo.push(`nv_moyen <= $${iF}`);
+      valFilo.push(filo.nv_moyen.max);
+      iF++;
+    }
+  }
+  if (filo.part_log_soc) {
+    if (filo.part_log_soc.min != null) {
+      whereFilo.push(`part_log_soc >= $${iF}`);
+      valFilo.push(filo.part_log_soc.min);
+      iF++;
+    }
+    if (filo.part_log_soc.max != null) {
+      whereFilo.push(`part_log_soc <= $${iF}`);
+      valFilo.push(filo.part_log_soc.max);
+      iF++;
+    }
+  }
+
+  if (whereFilo.length <= 1) {
+    console.timeEnd('E) Filosofi');
+    // => rien de paramétré => on ne filtre pas
+    return arrayCarreLoc;
+  }
+
+  const whFi = 'WHERE ' + whereFilo.join(' AND ');
+  const queryFi = `
+    SELECT idcar_200m
+    FROM filosofi.c200_france_2019
+    ${whFi}
+  `;
+  let resFi = await pool.query(queryFi, valFilo);
+  let arrFi = resFi.rows.map(r => r.idcar_200m);
+  console.log('=> Filosofi rowCount =', arrFi.length);
+
+  console.time('E) Filosofi intersection');
+  let result = intersectArrays(arrayCarreLoc, arrFi);
+  console.timeEnd('E) Filosofi intersection');
+  console.log('=> after Filosofi intersectionSet.length =', result.length);
+
+  console.timeEnd('E) Filosofi');
+  return result;
+}
+
+// ---------------------------------------------------------------------
+// 6) Critères partiels : Ecoles, Collèges
+// ---------------------------------------------------------------------
+
+async function applyEcolesPartial(arrayCarreLoc, ecoles) {
+  if (!isEcolesActivated(ecoles)) {
+    return arrayCarreLoc;
+  }
+  console.time('G) Ecoles');
+  // 1) subsetCouvert = carreaux sur Paris (insee_com ILIKE '751%')
+  console.time('G) Ecoles subsetCouvert query');
+  const queryParis = `
+    SELECT idinspire
+    FROM decoupages.grille200m_metropole
+    WHERE idinspire = ANY($1)
+      AND insee_com ILIKE '751%'
+  `;
+  let resParis = await pool.query(queryParis, [arrayCarreLoc]);
+  console.timeEnd('G) Ecoles subsetCouvert query');
+
+  let subsetCouvert = resParis.rows.map(r => r.idinspire);
+  console.log(`G) Ecoles => subsetCouvert.length = ${subsetCouvert.length}`);
+
+  // 2) Filtrer subsetCouvert via la table pivot ecoles
+  let wE = [];
+  let vE = [];
+  let iE = 1;
+
+  wE.push(`id_carre_200m = ANY($${iE})`);
+  vE.push(subsetCouvert);
+  iE++;
+
+  if (ecoles.ips_min != null) {
+    wE.push(`ips >= $${iE}`);
+    vE.push(ecoles.ips_min);
+    iE++;
+  }
+  if (ecoles.ips_max != null) {
+    wE.push(`ips <= $${iE}`);
+    vE.push(ecoles.ips_max);
+    iE++;
+  }
+
+  if (wE.length <= 1) {
+    console.timeEnd('G) Ecoles');
+    // => aucun param => on ne filtre pas subsetCouvert
+    return arrayCarreLoc;
+  }
+
+  const queryEco = `
+    SELECT DISTINCT id_carre_200m
+    FROM education_ecoles.idcar200m_rne_ipsecoles
+    WHERE ${wE.join(' AND ')}
+  `;
+  console.time('G) Ecoles pivot query');
+  let resEco = await pool.query(queryEco, vE);
+  console.timeEnd('G) Ecoles pivot query');
+
+  let subsetCouvertFiltre = resEco.rows.map(r => r.id_carre_200m);
+  console.log(`G) Ecoles => subsetCouvertFiltre.length = ${subsetCouvertFiltre.length}`);
+
+  // 3) subsetHors = difference
+  let subsetHors = differenceArrays(arrayCarreLoc, subsetCouvert);
+  console.log(`G) Ecoles => subsetHors.length = ${subsetHors.length}`);
+
+  // 4) union
+  let result = unionArrays(subsetCouvertFiltre, subsetHors);
+  console.log(`G) Ecoles => result.length = ${result.length}`);
+
+  console.timeEnd('G) Ecoles');
+  return result;
+}
+
+async function applyCollegesPartial(arrayCarreLoc, col) {
+  if (!isCollegesActivated(col)) {
+    return arrayCarreLoc;
+  }
+  console.time('F) Colleges');
+
+  // Ex: départements manquants
+  const DEPS_MANQUANTS = ['17','22','2A','29','2B','52','56']; 
+  // 1) subsetCouvert => exclure dep manquants
+  console.time('F) Colleges subsetCouvert query');
+  const inClause = DEPS_MANQUANTS.map(d => `'${d}'`).join(',');
+  const qCouv = `
+    SELECT idinspire
+    FROM decoupages.grille200m_metropole
+    WHERE idinspire = ANY($1)
+      AND insee_dep NOT IN (${inClause})
+  `;
+  let resCouv = await pool.query(qCouv, [arrayCarreLoc]);
+  console.timeEnd('F) Colleges subsetCouvert query');
+
+  let subsetCouvert = resCouv.rows.map(r => r.idinspire);
+  console.log(`F) Colleges => subsetCouvert.length = ${subsetCouvert.length}`);
+
+  // 2) Filtrer via pivot
+  let wCols = [];
+  let valsCols = [];
+  let iC = 1;
+
+  wCols.push(`id_carre_200m = ANY($${iC})`);
+  valsCols.push(subsetCouvert);
+  iC++;
+
+  if (col.valeur_figaro_min != null) {
+    wCols.push(`niveau_college_figaro >= $${iC}`);
+    valsCols.push(col.valeur_figaro_min);
+    iC++;
+  }
+  if (col.valeur_figaro_max != null) {
+    wCols.push(`niveau_college_figaro <= $${iC}`);
+    valsCols.push(col.valeur_figaro_max);
+    iC++;
+  }
+
+  if (wCols.length <= 1) {
+    // => aucun param => pas de filtrage
+    console.timeEnd('F) Colleges');
+    return arrayCarreLoc;
+  }
+
+  console.time('F) Colleges pivot query');
+  const qCols = `
+    SELECT DISTINCT id_carre_200m
+    FROM education_colleges.idcar200m_rne_niveaucolleges
+    WHERE ${wCols.join(' AND ')}
+  `;
+  let resCols = await pool.query(qCols, valsCols);
+  console.timeEnd('F) Colleges pivot query');
+
+  let subsetCouvertFiltre = resCols.rows.map(r => r.id_carre_200m);
+  console.log(`F) Colleges => subsetCouvertFiltre.length = ${subsetCouvertFiltre.length}`);
+
+  // 3) subsetHors
+  let subsetHors = differenceArrays(arrayCarreLoc, subsetCouvert);
+  console.log(`F) Colleges => subsetHors.length = ${subsetHors.length}`);
+
+  // 4) union
+  let result = unionArrays(subsetCouvertFiltre, subsetHors);
+  console.log(`F) Colleges => result.length = ${result.length}`);
+
+  console.timeEnd('F) Colleges');
+  return result;
+}
+
+// ---------------------------------------------------------------------
+// 7) ROUTE POST /get_carreaux_filtre
 // ---------------------------------------------------------------------
 app.post('/get_carreaux_filtre', async (req, res) => {
   console.log('>>> BODY RECEIVED FROM BUBBLE:', JSON.stringify(req.body, null, 2));
   console.log('=== START /get_carreaux_filtre ===');
   console.time('TOTAL /get_carreaux_filtre');
+
   try {
     const { params, criteria } = req.body;
     if (!params || !params.code_type || !params.codes) {
+      console.timeEnd('TOTAL /get_carreaux_filtre');
       return res.status(400).json({ error: 'Paramètres de localisation manquants.' });
     }
 
-    const { code_type, codes } = params;
-    let communesSelection = [];
+    // 1) Localisation + insécurité
+    let arrayCarreLoc = await getCarresLocalisationAndInsecurite(params, criteria);
+    if (!arrayCarreLoc.length) {
+      console.timeEnd('TOTAL /get_carreaux_filtre');
+      return res.json({ nb_carreaux: 0, carreaux: [] });
+    }
 
-    // ----------------------------------------------------
-    // A) Obtenir la liste de communes
-    // ----------------------------------------------------
-    console.time('A) localiser communes');
-    if (code_type === 'com') {
-      communesSelection = codes;
-    } else if (code_type === 'dep') {
-      let allCom = [];
-      for (let dep of codes) {
-        let comDep = await getCommunesFromDepartements([dep]);
-        allCom = [...allCom, ...comDep];
+    // 2) DVF intersection stricte
+    if (isDVFActivated(criteria?.dvf)) {
+      arrayCarreLoc = await applyDVF(arrayCarreLoc, criteria.dvf);
+      if (!arrayCarreLoc.length) {
+        console.timeEnd('TOTAL /get_carreaux_filtre');
+        return res.json({ nb_carreaux: 0, carreaux: [] });
       }
-      communesSelection = Array.from(new Set(allCom));
-    } else {
-      return res.status(400).json({ error: 'code_type doit être "com" ou "dep".' });
     }
-    console.log('=> communesSelection.length =', communesSelection.length);
-    console.timeEnd('A) localiser communes');
 
-    if (communesSelection.length === 0) {
+    // 3) Filosofi intersection stricte
+    if (isFilosofiActivated(criteria?.filosofi)) {
+      arrayCarreLoc = await applyFilosofi(arrayCarreLoc, criteria.filosofi);
+      if (!arrayCarreLoc.length) {
+        console.timeEnd('TOTAL /get_carreaux_filtre');
+        return res.json({ nb_carreaux: 0, carreaux: [] });
+      }
+    }
+
+    // 4) Collèges => filtrage partiel
+    if (isCollegesActivated(criteria?.colleges)) {
+      arrayCarreLoc = await applyCollegesPartial(arrayCarreLoc, criteria.colleges);
+      // pas de check si 0 => hors zone couverte est conservé
+    }
+
+    // 5) Ecoles => filtrage partiel
+    if (isEcolesActivated(criteria?.ecoles)) {
+      arrayCarreLoc = await applyEcolesPartial(arrayCarreLoc, criteria.ecoles);
+      // idem
+    }
+
+    const intersectionSet = arrayCarreLoc;
+    console.log('=> final intersectionSet.length =', intersectionSet.length);
+    if (!intersectionSet.length) {
       console.timeEnd('TOTAL /get_carreaux_filtre');
       return res.json({ nb_carreaux: 0, carreaux: [] });
     }
 
-    // ----------------------------------------------------
-    // B) Filtre insécurité -> intersection de communes
-    // ----------------------------------------------------
-    let communesFinal = communesSelection;
-    if (criteria && criteria.insecurite && criteria.insecurite.min != null) {
-      console.time('B) insecurite query');
-      const queryIns = `
-        SELECT insee_com
-        FROM delinquance.notes_insecurite_geom_complet
-        WHERE note_sur_20 >= $1
-          AND insee_com = ANY($2)
-      `;
-      const valIns = [criteria.insecurite.min, communesSelection];
-      let resIns = await pool.query(queryIns, valIns);
-      console.timeEnd('B) insecurite query');
-
-      let communesInsecOk = resIns.rows.map(r => r.insee_com);
-      console.log('=> communesInsecOk.length =', communesInsecOk.length);
-
-      console.time('B) intersection communes insecurite');
-      communesFinal = intersectArrays(communesSelection, communesInsecOk);
-      console.timeEnd('B) intersection communes insecurite');
-      console.log('=> communesFinal (after insecurite) =', communesFinal.length);
-    }
-
-    if (communesFinal.length === 0) {
-      console.timeEnd('TOTAL /get_carreaux_filtre');
-      return res.json({ nb_carreaux: 0, carreaux: [] });
-    }
-
-    // ----------------------------------------------------
-    // C) Récupérer la liste de carreaux => insee_com && communesFinal
-    // ----------------------------------------------------
-    console.time('C) grille200m query');
-    const queryCarrLoc = `
-      SELECT idinspire AS id_carre_200m
-      FROM decoupages.grille200m_metropole
-      WHERE insee_com && $1
+    // (I) Communes regroupement
+    // => On veut renvoyer un tableau "communes: [...]" 
+    //    { insee_com, nom_com, insee_dep, nom_dep, nb_carreaux }
+    console.time('I) Communes regroupement');
+    // on n'a pas forcément la liste des communes sélectionnées (communesFinal),
+    // tu peux faire un unnest, puis JOINTURE sur decoupages.communes
+    const queryCommunes = `
+      WITH selected_ids AS (
+        SELECT unnest($1::text[]) AS id
+      ),
+      expanded AS (
+        SELECT unnest(g.insee_com) AS insee
+        FROM decoupages.grille200m_metropole g
+        JOIN selected_ids s ON g.idinspire = s.id
+      )
+      SELECT 
+        e.insee AS insee_com,
+        c.nom AS nom_com,
+        c.insee_dep,
+        c.nom_dep,
+        COUNT(*) AS nb_carreaux
+      FROM expanded e
+      JOIN decoupages.communes c
+         ON ( c.insee_com = e.insee OR c.insee_arm = e.insee )
+      GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
+      ORDER BY nb_carreaux DESC
     `;
-    const valCarrLoc = [communesFinal];
-    let resCarrLoc = await pool.query(queryCarrLoc, valCarrLoc);
-    console.timeEnd('C) grille200m query');
 
-    let arrayCarreLoc = resCarrLoc.rows.map(r => r.id_carre_200m);
-    console.log('=> arrayCarreLoc.length =', arrayCarreLoc.length);
+    const communesRes = await pool.query(queryCommunes, [intersectionSet]);
+    console.timeEnd('I) Communes regroupement');
+    console.log('=> Nombre de communes distinctes =', communesRes.rowCount);
 
-    if (arrayCarreLoc.length === 0) {
-      console.timeEnd('TOTAL /get_carreaux_filtre');
-      return res.json({ nb_carreaux: 0, carreaux: [] });
-    }
+    let communesData = communesRes.rows.map(row => ({
+      insee_com: row.insee_com,
+      nom_com: row.nom_com,
+      insee_dep: row.insee_dep,
+      nom_dep: row.nom_dep,
+      nb_carreaux: Number(row.nb_carreaux)
+    }));
 
-    let setsOfCarreaux = [arrayCarreLoc];
-
-    // ----------------------------------------------------
-    // D) Critère DVF => filtrer dvf_simplifie 
-    //    seulement sur id_carre_200m = ANY(arrayCarreLoc)
-    // ----------------------------------------------------
-    if (criteria && criteria.dvf) {
-      console.time('D) DVF build query');
-      let whereClauses = [];
-      let values = [];
-      let idx = 1;
-
-      // 1) Filtrer sur id_carre_200m
-      whereClauses.push(`id_carre_200m = ANY($${idx})`);
-      values.push(arrayCarreLoc);
-      idx++;
-
-      // propertyTypes => Bubble enverra directement les valeurs numériques : 1 pour maison, 2 pour appartement
-      if (criteria.dvf.propertyTypes && criteria.dvf.propertyTypes.length > 0) {
-        // On suppose que criteria.dvf.propertyTypes est déjà un tableau de nombres : [1,2], [1], ou [2]
-        whereClauses.push(`codtyploc = ANY($${idx})`);
-        values.push(criteria.dvf.propertyTypes); // on push directement le tableau (ex. [1,2])
-        idx++;
-      }
-
-      // budget
-      if (criteria.dvf.budget) {
-        if (criteria.dvf.budget.min != null) {
-          whereClauses.push(`valeurfonc >= $${idx}`);
-          values.push(criteria.dvf.budget.min);
-          idx++;
-        }
-        if (criteria.dvf.budget.max != null) {
-          whereClauses.push(`valeurfonc <= $${idx}`);
-          values.push(criteria.dvf.budget.max);
-          idx++;
-        }
-      }
-      // surface
-      if (criteria.dvf.surface) {
-        if (criteria.dvf.surface.min != null) {
-          whereClauses.push(`sbati >= $${idx}`);
-          values.push(criteria.dvf.surface.min);
-          idx++;
-        }
-        if (criteria.dvf.surface.max != null) {
-          whereClauses.push(`sbati <= $${idx}`);
-          values.push(criteria.dvf.surface.max);
-          idx++;
-        }
-      }
-      // rooms
-      if (criteria.dvf.rooms) {
-        if (criteria.dvf.rooms.min != null) {
-          whereClauses.push(`nbpprinc >= $${idx}`);
-          values.push(criteria.dvf.rooms.min);
-          idx++;
-        }
-        if (criteria.dvf.rooms.max != null) {
-          whereClauses.push(`nbpprinc <= $${idx}`);
-          values.push(criteria.dvf.rooms.max);
-          idx++;
-        }
-      }
-      // years
-      if (criteria.dvf.years) {
-        if (criteria.dvf.years.min != null) {
-          whereClauses.push(`anneemut >= $${idx}`);
-          values.push(criteria.dvf.years.min);
-          idx++;
-        }
-        if (criteria.dvf.years.max != null) {
-          whereClauses.push(`anneemut <= $${idx}`);
-          values.push(criteria.dvf.years.max);
-          idx++;
-        }
-      }
-
-      const whDVF = 'WHERE ' + whereClauses.join(' AND ');
-      const queryDVF = `
-        SELECT DISTINCT id_carre_200m
-        FROM dvf_filtre.dvf_simplifie
-        ${whDVF}
-      `;
-      console.timeEnd('D) DVF build query');
-
-      console.time('D) DVF exec query');
-      let resDVF = await pool.query(queryDVF, values);
-      console.timeEnd('D) DVF exec query');
-
-      let arrDVF = resDVF.rows.map(r => r.id_carre_200m);
-      console.log('=> DVF rowCount =', arrDVF.length);
-      setsOfCarreaux.push(arrDVF);
-    }
-
-    // ----------------------------------------------------
-    // E) Filosofi => filtrer sur arrayCarreLoc + nv_moyen + part_log_soc
-    // ----------------------------------------------------
-    if (criteria && criteria.filosofi) {
-      console.time('E) Filosofi');
-      let whereFilo = [];
-      let valFilo = [];
-      let iF = 1;
-
-      // 1) Filtrer par id_carre_200m
-      whereFilo.push(`idcar_200m = ANY($${iF})`);
-      valFilo.push(arrayCarreLoc);
-      iF++;
-
-      if (criteria.filosofi.nv_moyen) {
-        if (criteria.filosofi.nv_moyen.min != null) {
-          whereFilo.push(`nv_moyen >= $${iF}`);
-          valFilo.push(criteria.filosofi.nv_moyen.min);
-          iF++;
-        }
-        if (criteria.filosofi.nv_moyen.max != null) {
-          whereFilo.push(`nv_moyen <= $${iF}`);
-          valFilo.push(criteria.filosofi.nv_moyen.max);
-          iF++;
-        }
-      }
-      if (criteria.filosofi.part_log_soc) {
-        if (criteria.filosofi.part_log_soc.min != null) {
-          whereFilo.push(`part_log_soc >= $${iF}`);
-          valFilo.push(criteria.filosofi.part_log_soc.min);
-          iF++;
-        }
-        if (criteria.filosofi.part_log_soc.max != null) {
-          whereFilo.push(`part_log_soc <= $${iF}`);
-          valFilo.push(criteria.filosofi.part_log_soc.max);
-          iF++;
-        }
-      }
-
-      if (whereFilo.length>0) {
-        const whFi = 'WHERE ' + whereFilo.join(' AND ');
-        const queryFi = `
-          SELECT idcar_200m
-          FROM filosofi.c200_france_2019
-          ${whFi}
-        `;
-        let resFi = await pool.query(queryFi, valFilo);
-        let arrFi = resFi.rows.map(r => r.idcar_200m);
-        console.log('=> Filosofi rowCount =', arrFi.length);
-        setsOfCarreaux.push(arrFi);
-      }
-      console.timeEnd('E) Filosofi');
-    }
-
-    // ----------------------------------------------------
-    // F) Collèges => filtrer sur arrayCarreLoc + niveau_college_figaro
-    // ----------------------------------------------------
-    if (criteria && criteria.colleges) {
-      console.time('F) Colleges');
-      let wf = [];
-      let vf = [];
-      let ic = 1;
-
-      // Filtrer par id_carre_200m
-      wf.push(`id_carre_200m = ANY($${ic})`);
-      vf.push(arrayCarreLoc);
-      ic++;
-
-      if (criteria.colleges.valeur_figaro_min != null) {
-        wf.push(`niveau_college_figaro >= $${ic}`);
-        vf.push(criteria.colleges.valeur_figaro_min);
-        ic++;
-      }
-      if (criteria.colleges.valeur_figaro_max != null) {
-        wf.push(`niveau_college_figaro <= $${ic}`);
-        vf.push(criteria.colleges.valeur_figaro_max);
-        ic++;
-      }
-
-      if (wf.length>0) {
-        const queryColl = `
-          SELECT DISTINCT id_carre_200m
-          FROM education_colleges.idcar200m_rne_niveaucolleges
-          WHERE ${wf.join(' AND ')}
-        `;
-        let resColl = await pool.query(queryColl, vf);
-        let arrColl = resColl.rows.map(r => r.id_carre_200m);
-        console.log('=> Colleges rowCount =', arrColl.length);
-        setsOfCarreaux.push(arrColl);
-      }
-      console.timeEnd('F) Colleges');
-    }
-
-    // ----------------------------------------------------
-    // G) Écoles => filtrer sur arrayCarreLoc + ips
-    // ----------------------------------------------------
-    if (criteria && criteria.ecoles) {
-      console.time('G) Ecoles');
-      let wE = [];
-      let vE = [];
-      let iE = 1;
-
-      wE.push(`id_carre_200m = ANY($${iE})`);
-      vE.push(arrayCarreLoc);
-      iE++;
-
-      if (criteria.ecoles.ips_min != null) {
-        wE.push(`ips >= $${iE}`);
-        vE.push(criteria.ecoles.ips_min);
-        iE++;
-      }
-      if (criteria.ecoles.ips_max != null) {
-        wE.push(`ips <= $${iE}`);
-        vE.push(criteria.ecoles.ips_max);
-        iE++;
-      }
-
-      if (wE.length>0) {
-        const queryEco = `
-          SELECT DISTINCT id_carre_200m
-          FROM education_ecoles.idcar200m_rne_ipsecoles
-          WHERE ${wE.join(' AND ')}
-        `;
-        let resEco = await pool.query(queryEco, vE);
-        let arrEco = resEco.rows.map(r => r.id_carre_200m);
-        console.log('=> Ecoles rowCount =', arrEco.length);
-        setsOfCarreaux.push(arrEco);
-      }
-      console.timeEnd('G) Ecoles');
-    }
-
-    // ----------------------------------------------------
-    // H) Intersection finale
-    // ----------------------------------------------------
-    console.time('H) Intersection');
-    if (setsOfCarreaux.length === 0) {
-      console.timeEnd('H) Intersection');
-      console.timeEnd('TOTAL /get_carreaux_filtre');
-      return res.json({ nb_carreaux: 0, carreaux: [] });
-    }
-
-    let intersectionSet = setsOfCarreaux[0];
-    for (let i=1; i<setsOfCarreaux.length; i++) {
-      intersectionSet = intersectArrays(intersectionSet, setsOfCarreaux[i]);
-      if (intersectionSet.length === 0) break;
-    }
-    console.timeEnd('H) Intersection');
-
-    console.timeEnd('TOTAL /get_carreaux_filtre');
-
-    // On construit la réponse principale
-    let finalResponse = {
+    // On construit la réponse finale
+    const finalResponse = {
       nb_carreaux: intersectionSet.length,
-      carreaux: intersectionSet
+      carreaux: intersectionSet,
+      communes: communesData
     };
 
-    // I) Communes regroupement : renvoyer nb de carreaux par commune
-    // On veut n'afficher que les communes qui sont dans 'communesFinal'.
-    // + on gère "OR c.insee_arm = e.insee" pour trouver l'arrondissement.
-    if (intersectionSet.length > 0 && communesFinal.length>0) {
-      console.time('I) Communes regroupement');
-      const queryCommunes = `
-        WITH final_ids AS (
-          SELECT unnest($1::text[]) AS id
-        ),
-        expanded AS (
-          SELECT unnest(g.insee_com) AS insee
-          FROM decoupages.grille200m_metropole g
-          JOIN final_ids f ON g.idinspire = f.id
-        )
-        SELECT
-          e.insee AS insee_com,
-          c.nom AS nom_com,
-          c.insee_dep,
-          c.nom_dep,
-          COUNT(*) AS nb_carreaux
-        FROM expanded e
-        JOIN decoupages.communes c 
-        ON ( c.insee_com = e.insee OR c.insee_arm = e.insee )
-        WHERE e.insee = ANY($2::text[])
-        GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
-        ORDER BY nb_carreaux DESC
-      `;
-      
-      const communesResult = await pool.query(queryCommunes, [
-        intersectionSet, 
-        communesFinal
-      ]);
-
-      console.timeEnd('I) Communes regroupement');
-      console.log('=> Nombre de communes distinctes =', communesResult.rowCount);
-
-      let communesData = communesResult.rows.map(row => ({
-        insee_com: row.insee_com,
-        nom_com: row.nom_com,
-        insee_dep: row.insee_dep,
-        nom_dep: row.nom_dep,
-        nb_carreaux: Number(row.nb_carreaux)
-      }));
-
-      finalResponse.communes = communesData;
-    }
-
-  // Ajout d'un console.log sur le nombre final de communes pour voir si Bubble récupère bien les résultats de l'API (et la cause des "empty" côté Bubble)
-  if (finalResponse.communes) {
-    console.log(`--> nb_communes distinct = ${finalResponse.communes.length}`);
-  }
-  console.log(`--> nb_carreaux found = ${intersectionSet.length}`);
-
-
+    console.timeEnd('TOTAL /get_carreaux_filtre');
     return res.json(finalResponse);
 
   } catch (error) {
@@ -485,7 +617,9 @@ app.post('/get_carreaux_filtre', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------
 // Lancement serveur
+// ----------------------------------------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`API démarrée sur le port ${PORT}`);
