@@ -370,7 +370,11 @@ async function applyEcolesPartial(arrayCarreLoc, ecoles) {
     SELECT idinspire
     FROM decoupages.grille200m_metropole
     WHERE idinspire = ANY($1)
-      AND insee_com ILIKE '751%'
+      AND EXISTS (
+        SELECT 1
+        FROM unnest(insee_com) AS c
+        WHERE c ILIKE '751%'
+      )
   `;
   let resParis = await pool.query(queryParis, [arrayCarreLoc]);
   console.timeEnd('G) Ecoles subsetCouvert query');
@@ -443,7 +447,11 @@ async function applyCollegesPartial(arrayCarreLoc, col) {
     SELECT idinspire
     FROM decoupages.grille200m_metropole
     WHERE idinspire = ANY($1)
-      AND insee_dep NOT IN (${inClause})
+      AND NOT EXISTS (
+        SELECT 1
+        FROM unnest(insee_dep) d
+        WHERE d IN ('17','22','2A','29','2B','52','56')
+      )
   `;
   let resCouv = await pool.query(qCouv, [arrayCarreLoc]);
   console.timeEnd('F) Colleges subsetCouvert query');
