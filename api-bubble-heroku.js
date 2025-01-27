@@ -129,13 +129,13 @@ async function getCommunesFromDepartements(depCodes) {
 // ---------------------------------------------------------------------
 async function getCarresLocalisationAndInsecurite(params, criteria) {
   const { code_type, codes } = params;
-  let communesFinal = []; // Liste finale des communes à utiliser
+  let communesSelection = []; // Liste finale des communes à utiliser
 
   // A) Obtenir la liste de communes à partir des codes de localisation
   console.time('A) localiser communes');
   if (code_type === 'com') {
     // Si l'utilisateur a fourni directement des communes
-    communesFinal = codes;
+    communesSelection = codes;
   } else if (code_type === 'dep') {
     // Si l'utilisateur a fourni des départements
     let allCom = [];
@@ -143,15 +143,15 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
       let comDep = await getCommunesFromDepartements([dep]); // Récupérer les communes d'un département
       allCom = [...allCom, ...comDep];
     }
-    communesFinal = Array.from(new Set(allCom)); // Éliminer les doublons
+    communesSelection = Array.from(new Set(allCom)); // Éliminer les doublons
   } else {
     throw new Error('code_type doit être "com" ou "dep".');
   }
-  console.log('=> communesFinal.length =', communesFinal.length);
+  console.log('=> communesSelection.length =', communesSelection.length);
   console.timeEnd('A) localiser communes');
 
   // Si aucune commune n'est sélectionnée, on arrête
-  if (!communesFinal.length) {
+  if (!communesSelection.length) {
     return [];
   }
 
@@ -164,7 +164,7 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
       WHERE note_sur_20 >= $1
         AND insee_com = ANY($2)
     `;
-    const valIns = [criteria.insecurite.min, communesFinal];
+    const valIns = [criteria.insecurite.min, communesSelection];
     let resIns = await pool.query(queryIns, valIns);
     console.timeEnd('B) insecurite query');
 
@@ -172,12 +172,12 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
     console.log('=> communesInsecOk.length =', communesInsecOk.length);
 
     console.time('B) intersection communes insecurite');
-    communesFinal = intersectArrays(communesFinal, communesInsecOk);
+    communesSelection = intersectArrays(communesSelection, communesInsecOk);
     console.timeEnd('B) intersection communes insecurite');
-    console.log('=> communesFinal (after insecurite) =', communesFinal.length);
+    console.log('=> communesSelection (after insecurite) =', communesSelection.length);
 
     // Si aucune commune ne reste après l'application du critère d'insécurité, on arrête
-    if (!communesFinal.length) {
+    if (!communesSelection.length) {
       return [];
     }
   }
@@ -189,7 +189,7 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
     FROM decoupages.grille200m_metropole
     WHERE insee_com && $1
   `;
-  const valCarrLoc = [communesFinal];
+  const valCarrLoc = [communesSelection];
   let resCarrLoc = await pool.query(queryCarrLoc, valCarrLoc);
   console.timeEnd('C) grille200m query');
 
@@ -576,7 +576,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     // => On veut renvoyer un tableau "communes: [...]" 
     //    { insee_com, nom_com, insee_dep, nom_dep, nb_carreaux }
     console.time('I) Communes regroupement');
-    // on n'a pas forcément la liste des communes sélectionnées (communesFinal),
+    // on n'a pas forcément la liste des communes sélectionnées (communesSelection),
     // tu peux faire un unnest, puis JOINTURE sur decoupages.communes
     const queryCommunes = `
       WITH selected_ids AS (
@@ -596,12 +596,12 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       FROM expanded e
       JOIN decoupages.communes c
          ON (c.insee_com = e.insee OR c.insee_arm = e.insee)
-      WHERE e.insee = ANY($2) -- Filtrer pour n'inclure que les communes de "communesFinal"
+      WHERE e.insee = ANY($2) -- Filtrer pour n'inclure que les communes de "communesSelection"
       GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
       ORDER BY nb_carreaux DESC
     `;
 
-    const communesRes = await pool.query(queryCommunes, [intersectionSet, communesFinal]); // Ajout de communesFinal ici
+    const communesRes = await pool.query(queryCommunes, [intersectionSet, communesSelection]); // Ajout de communesSelection ici
     console.timeEnd('I) Communes regroupement');
     console.log('=> Nombre de communes distinctes =', communesRes.rowCount);
 
