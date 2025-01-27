@@ -129,34 +129,38 @@ async function getCommunesFromDepartements(depCodes) {
 // ---------------------------------------------------------------------
 async function getCarresLocalisationAndInsecurite(params, criteria) {
   const { code_type, codes } = params;
-  let communesSelection = []; // Liste finale des communes à utiliser
+  let communesFinal = [];
 
-  // A) Obtenir la liste de communes à partir des codes de localisation
+  // A) Obtenir la liste de communes
   console.time('A) localiser communes');
+  let communesSelection = [];  // provisoire
+
   if (code_type === 'com') {
-    // Si l'utilisateur a fourni directement des communes
     communesSelection = codes;
   } else if (code_type === 'dep') {
-    // Si l'utilisateur a fourni des départements
     let allCom = [];
     for (let dep of codes) {
-      let comDep = await getCommunesFromDepartements([dep]); // Récupérer les communes d'un département
-      allCom = [...allCom, ...comDep];
+      // getCommunesFromDepartements renvoie un tableau de communes 
+      let comDep = await getCommunesFromDepartements([dep]);
+      allCom.push(...comDep);
     }
-    communesSelection = Array.from(new Set(allCom)); // Éliminer les doublons
+    communesSelection = Array.from(new Set(allCom));
   } else {
     throw new Error('code_type doit être "com" ou "dep".');
   }
   console.log('=> communesSelection.length =', communesSelection.length);
   console.timeEnd('A) localiser communes');
 
-  // Si aucune commune n'est sélectionnée, on arrête
   if (!communesSelection.length) {
-    return [];
+    // Personne n'a sélectionné de commune ou de département valide
+    return { arrayCarreLoc: [], communesFinal: [] };
   }
 
+  // on initialise 'communesFinal' (la liste de communes après la localisation)
+  communesFinal = communesSelection;
+
   // B) insécurité (intersection)
-  if (criteria && criteria.insecurite && criteria.insecurite.min != null) {
+  if (criteria?.insecurite?.min != null) {
     console.time('B) insecurite query');
     const queryIns = `
       SELECT insee_com
@@ -164,7 +168,7 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
       WHERE note_sur_20 >= $1
         AND insee_com = ANY($2)
     `;
-    const valIns = [criteria.insecurite.min, communesSelection];
+    const valIns = [criteria.insecurite.min, communesFinal];
     let resIns = await pool.query(queryIns, valIns);
     console.timeEnd('B) insecurite query');
 
@@ -172,13 +176,13 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
     console.log('=> communesInsecOk.length =', communesInsecOk.length);
 
     console.time('B) intersection communes insecurite');
-    communesSelection = intersectArrays(communesSelection, communesInsecOk);
+    communesFinal = intersectArrays(communesFinal, communesInsecOk);
     console.timeEnd('B) intersection communes insecurite');
-    console.log('=> communesSelection (after insecurite) =', communesSelection.length);
+    console.log('=> communesFinal (after insecurite) =', communesFinal.length);
 
-    // Si aucune commune ne reste après l'application du critère d'insécurité, on arrête
-    if (!communesSelection.length) {
-      return [];
+    if (!communesFinal.length) {
+      // plus aucune commune ne correspond
+      return { arrayCarreLoc: [], communesFinal: [] };
     }
   }
 
@@ -189,14 +193,17 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
     FROM decoupages.grille200m_metropole
     WHERE insee_com && $1
   `;
-  const valCarrLoc = [communesSelection];
+  const valCarrLoc = [communesFinal];
   let resCarrLoc = await pool.query(queryCarrLoc, valCarrLoc);
   console.timeEnd('C) grille200m query');
 
   let arrayCarreLoc = resCarrLoc.rows.map(r => r.id_carre_200m);
   console.log('=> arrayCarreLoc.length =', arrayCarreLoc.length);
 
-  return arrayCarreLoc; // Retourne les carreaux correspondant aux communes finales
+    return {
+    arrayCarreLoc,
+    communesFinal
+  };
 }
 
 // ---------------------------------------------------------------------
@@ -529,12 +536,12 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     }
 
     // 1) Localisation + insécurité
-    let arrayCarreLoc = await getCarresLocalisationAndInsecurite(params, criteria);
+    const { arrayCarreLoc, communesFinal } = 
+      await getCarresLocalisationAndInsecurite(params, criteria);
     if (!arrayCarreLoc.length) {
       console.timeEnd('TOTAL /get_carreaux_filtre');
       return res.json({ nb_carreaux: 0, carreaux: [] });
     }
-
     // 2) DVF intersection stricte
     if (isDVFActivated(criteria?.dvf)) {
       arrayCarreLoc = await applyDVF(arrayCarreLoc, criteria.dvf);
@@ -575,33 +582,55 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     // (I) Communes regroupement
     // => On veut renvoyer un tableau "communes: [...]" 
     //    { insee_com, nom_com, insee_dep, nom_dep, nb_carreaux }
-    console.time('I) Communes regroupement');
-    // on n'a pas forcément la liste des communes sélectionnées (communesSelection),
-    // tu peux faire un unnest, puis JOINTURE sur decoupages.communes
-    const queryCommunes = `
-      WITH selected_ids AS (
-        SELECT unnest($1::text[]) AS id
-      ),
-      expanded AS (
-        SELECT unnest(g.insee_com) AS insee
-        FROM decoupages.grille200m_metropole g
-        JOIN selected_ids s ON g.idinspire = s.id
-      )
-      SELECT 
-        e.insee AS insee_com,
-        c.nom AS nom_com,
-        c.insee_dep,
-        c.nom_dep,
-        COUNT(*) AS nb_carreaux
-      FROM expanded e
-      JOIN decoupages.communes c
-         ON (c.insee_com = e.insee OR c.insee_arm = e.insee)
-      WHERE e.insee = ANY($2) -- Filtrer pour n'inclure que les communes de "communesSelection"
-      GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
-      ORDER BY nb_carreaux DESC
-    `;
 
-    const communesRes = await pool.query(queryCommunes, [intersectionSet, communesSelection]); // Ajout de communesSelection ici
+    // Vérifier si on a des communes à afficher
+    if (!communesFinal.length) {
+      // => S'il n'y a plus aucune commune possible, 
+      //    alors forcément intersectionSet est "vide" ou 
+      //    on n'aura pas de "communes" à mapper.
+      //    Ici, on peut renvoyer direct le final.
+      const finalResponse = {
+        nb_carreaux: intersectionSet.length,
+        carreaux: intersectionSet,
+        communes: []
+      };
+      console.timeEnd('TOTAL /get_carreaux_filtre');
+      return res.json(finalResponse);
+    }
+
+    console.time('I) Communes regroupement');
+    // on n'a pas forcément la liste des communes sélectionnées (communesFinal),
+    // tu peux faire un unnest, puis JOINTURE sur decoupages.communes
+  const queryCommunes = `
+    WITH selected_ids AS (
+      SELECT unnest($1::text[]) AS id
+    ),
+    expanded AS (
+      SELECT unnest(g.insee_com) AS insee
+      FROM decoupages.grille200m_metropole g
+      JOIN selected_ids s ON g.idinspire = s.id
+    )
+    SELECT 
+      e.insee AS insee_com,
+      c.nom AS nom_com,
+      c.insee_dep,
+      c.nom_dep,
+      COUNT(*) AS nb_carreaux
+    FROM expanded e
+    JOIN decoupages.communes c
+       ON ( c.insee_com = e.insee OR c.insee_arm = e.insee )
+    WHERE e.insee = ANY($2::text[])
+    GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
+    ORDER BY nb_carreaux DESC
+  `;
+
+    // On passe 2 tableaux en param :
+    // $1 = intersectionSet (liste ID carreaux)
+    // $2 = communesFinal (la liste de communes post-insécurité)
+    const communesRes = await pool.query(queryCommunes, [
+      intersectionSet,
+      communesFinal
+    ]);
     console.timeEnd('I) Communes regroupement');
     console.log('=> Nombre de communes distinctes =', communesRes.rowCount);
 
