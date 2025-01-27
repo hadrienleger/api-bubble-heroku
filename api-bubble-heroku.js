@@ -135,7 +135,7 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
   console.time('A) localiser communes');
   if (code_type === 'com') {
     // Si l'utilisateur a fourni directement des communes
-    communesSelection = codes;
+    communesFinal = codes;
   } else if (code_type === 'dep') {
     // Si l'utilisateur a fourni des départements
     let allCom = [];
@@ -143,15 +143,15 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
       let comDep = await getCommunesFromDepartements([dep]); // Récupérer les communes d'un département
       allCom = [...allCom, ...comDep];
     }
-    communesSelection = Array.from(new Set(allCom)); // Éliminer les doublons
+    communesFinal = Array.from(new Set(allCom)); // Éliminer les doublons
   } else {
     throw new Error('code_type doit être "com" ou "dep".');
   }
-  console.log('=> communesSelection.length =', communesSelection.length);
+  console.log('=> communesFinal.length =', communesFinal.length);
   console.timeEnd('A) localiser communes');
 
   // Si aucune commune n'est sélectionnée, on arrête
-  if (!communesSelection.length) {
+  if (!communesFinal.length) {
     return [];
   }
 
@@ -164,7 +164,7 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
       WHERE note_sur_20 >= $1
         AND insee_com = ANY($2)
     `;
-    const valIns = [criteria.insecurite.min, communesSelection];
+    const valIns = [criteria.insecurite.min, communesFinal];
     let resIns = await pool.query(queryIns, valIns);
     console.timeEnd('B) insecurite query');
 
@@ -174,7 +174,7 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
     console.time('B) intersection communes insecurite');
     communesFinal = intersectArrays(communesFinal, communesInsecOk);
     console.timeEnd('B) intersection communes insecurite');
-    console.log('=> communesFinal (after insecurite) =', communesSelection.length);
+    console.log('=> communesFinal (after insecurite) =', communesFinal.length);
 
     // Si aucune commune ne reste après l'application du critère d'insécurité, on arrête
     if (!communesFinal.length) {
@@ -189,7 +189,7 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
     FROM decoupages.grille200m_metropole
     WHERE insee_com && $1
   `;
-  const valCarrLoc = [communesSelection];
+  const valCarrLoc = [communesFinal];
   let resCarrLoc = await pool.query(queryCarrLoc, valCarrLoc);
   console.timeEnd('C) grille200m query');
 
