@@ -129,25 +129,28 @@ async function getCommunesFromDepartements(depCodes) {
 // ---------------------------------------------------------------------
 async function getCarresLocalisationAndInsecurite(params, criteria) {
   const { code_type, codes } = params;
-  let communesSelection = [];
+  let communesFinal = []; // Liste finale des communes à utiliser
 
-  // A) Obtenir la liste de communes
+  // A) Obtenir la liste de communes à partir des codes de localisation
   console.time('A) localiser communes');
   if (code_type === 'com') {
+    // Si l'utilisateur a fourni directement des communes
     communesSelection = codes;
   } else if (code_type === 'dep') {
+    // Si l'utilisateur a fourni des départements
     let allCom = [];
     for (let dep of codes) {
-      let comDep = await getCommunesFromDepartements([dep]);
+      let comDep = await getCommunesFromDepartements([dep]); // Récupérer les communes d'un département
       allCom = [...allCom, ...comDep];
     }
-    communesSelection = Array.from(new Set(allCom));
+    communesSelection = Array.from(new Set(allCom)); // Éliminer les doublons
   } else {
     throw new Error('code_type doit être "com" ou "dep".');
   }
   console.log('=> communesSelection.length =', communesSelection.length);
   console.timeEnd('A) localiser communes');
 
+  // Si aucune commune n'est sélectionnée, on arrête
   if (!communesSelection.length) {
     return [];
   }
@@ -169,11 +172,12 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
     console.log('=> communesInsecOk.length =', communesInsecOk.length);
 
     console.time('B) intersection communes insecurite');
-    communesSelection = intersectArrays(communesSelection, communesInsecOk);
+    communesFinal = intersectArrays(communesFinal, communesInsecOk);
     console.timeEnd('B) intersection communes insecurite');
     console.log('=> communesFinal (after insecurite) =', communesSelection.length);
 
-    if (!communesSelection.length) {
+    // Si aucune commune ne reste après l'application du critère d'insécurité, on arrête
+    if (!communesFinal.length) {
       return [];
     }
   }
@@ -192,7 +196,7 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
   let arrayCarreLoc = resCarrLoc.rows.map(r => r.id_carre_200m);
   console.log('=> arrayCarreLoc.length =', arrayCarreLoc.length);
 
-  return arrayCarreLoc;
+  return arrayCarreLoc; // Retourne les carreaux correspondant aux communes finales
 }
 
 // ---------------------------------------------------------------------
@@ -591,12 +595,13 @@ app.post('/get_carreaux_filtre', async (req, res) => {
         COUNT(*) AS nb_carreaux
       FROM expanded e
       JOIN decoupages.communes c
-         ON ( c.insee_com = e.insee OR c.insee_arm = e.insee )
+         ON (c.insee_com = e.insee OR c.insee_arm = e.insee)
+      WHERE e.insee = ANY($2) -- Filtrer pour n'inclure que les communes de "communesFinal"
       GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
       ORDER BY nb_carreaux DESC
     `;
 
-    const communesRes = await pool.query(queryCommunes, [intersectionSet]);
+    const communesRes = await pool.query(queryCommunes, [intersectionSet, communesFinal]); // Ajout de communesFinal ici
     console.timeEnd('I) Communes regroupement');
     console.log('=> Nombre de communes distinctes =', communesRes.rowCount);
 
