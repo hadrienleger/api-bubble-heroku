@@ -535,17 +535,21 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       return res.status(400).json({ error: 'Paramètres de localisation manquants.' });
     }
 
-    // 1) Localisation + insécurité
+    // 1.A) Localisation + insécurité
     const { arrayCarreLoc, communesFinal } = 
       await getCarresLocalisationAndInsecurite(params, criteria);
     if (!arrayCarreLoc.length) {
       console.timeEnd('TOTAL /get_carreaux_filtre');
       return res.json({ nb_carreaux: 0, carreaux: [] });
     }
+
+    // 1.B) On travaille toujours sur “intersectionSet” (mutable) :
+    let intersectionSet = arrayCarreLoc;
+
     // 2) DVF intersection stricte
     if (isDVFActivated(criteria?.dvf)) {
-      arrayCarreLoc = await applyDVF(arrayCarreLoc, criteria.dvf);
-      if (!arrayCarreLoc.length) {
+      intersectionSet = await applyDVF(intersectionSet, criteria.dvf);
+      if (!intersectionSet.length) {
         console.timeEnd('TOTAL /get_carreaux_filtre');
         return res.json({ nb_carreaux: 0, carreaux: [] });
       }
@@ -553,8 +557,8 @@ app.post('/get_carreaux_filtre', async (req, res) => {
 
     // 3) Filosofi intersection stricte
     if (isFilosofiActivated(criteria?.filosofi)) {
-      arrayCarreLoc = await applyFilosofi(arrayCarreLoc, criteria.filosofi);
-      if (!arrayCarreLoc.length) {
+      intersectionSet = await applyFilosofi(intersectionSet, criteria.filosofi);
+      if (!intersectionSet.length) {
         console.timeEnd('TOTAL /get_carreaux_filtre');
         return res.json({ nb_carreaux: 0, carreaux: [] });
       }
@@ -562,17 +566,16 @@ app.post('/get_carreaux_filtre', async (req, res) => {
 
     // 4) Collèges => filtrage partiel
     if (isCollegesActivated(criteria?.colleges)) {
-      arrayCarreLoc = await applyCollegesPartial(arrayCarreLoc, criteria.colleges);
+      intersectionSet = await applyCollegesPartial(intersectionSet, criteria.colleges);
       // pas de check si 0 => hors zone couverte est conservé
     }
 
     // 5) Ecoles => filtrage partiel
     if (isEcolesActivated(criteria?.ecoles)) {
-      arrayCarreLoc = await applyEcolesPartial(arrayCarreLoc, criteria.ecoles);
+      intersectionSet = await applyEcolesPartial(intersectionSet, criteria.ecoles);
       // idem
     }
 
-    const intersectionSet = arrayCarreLoc;
     console.log('=> final intersectionSet.length =', intersectionSet.length);
     if (!intersectionSet.length) {
       console.timeEnd('TOTAL /get_carreaux_filtre');
