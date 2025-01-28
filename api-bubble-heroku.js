@@ -585,8 +585,8 @@ async function applyCollegesPartial(arrayCarreLoc, colCrit, collegesByCarre) {
     let rcNom = await pool.query(qNom, [arrRNE]);
     for (let row of rcNom.rows) {
       nomCollegeByRNE[row.code_rne] = {
-        nom_college: row.nom_college,
-        adresse: `${row.adresse} ${row.code_postal} ${row.commune}`
+        nom_college: row.appellation_officielle,
+        adresse: `${row.adresse_uai} ${row.code_postal_uai} ${row.libelle_commune}`
       };
     }
   }
