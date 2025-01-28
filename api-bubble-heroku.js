@@ -421,7 +421,7 @@ async function applyEcolesPartial(arrayCarreLoc, ecolesCrit, ecolesByCarre) {
   // => On a (id_carre_200m, code_rne, ips). On veut le nom de l'école.
   //   On fait un 2e mini-join sur la table "liste_etab" (adapte le nom):
   //   ex. SELECT code_rne, appellation_officielle, adresse_uai, code_postal_uai, libcommune_uai
-  //   FROM education_ecoles.liste_etab
+  //   FROM education.liste_etab
   //   WHERE code_rne in (distinct list)
 
   // 3.b) Récupérer tous les code_rne => set
@@ -437,7 +437,7 @@ async function applyEcolesPartial(arrayCarreLoc, ecolesCrit, ecolesByCarre) {
     const placeholders = listRNE.map((_,i)=>`$${i+1}`).join(',');
     const qNom = `
       SELECT code_rne, appellation_officielle, adresse_uai, code_postal_uai, libelle_commune
-      FROM education_ecoles.liste_etab
+      FROM education.liste_etab
       WHERE code_rne = ANY($1)
     `;
     let rNom = await pool.query(qNom, [listRNE]);
@@ -568,7 +568,7 @@ async function applyCollegesPartial(arrayCarreLoc, colCrit, collegesByCarre) {
   let rCols = await pool.query(qPivot, vals);
   console.timeEnd('F) Colleges pivot query');
 
-  // 2b) Récupérer noms => table "liste_colleges" (à adapter)
+  // 2b) Récupérer noms => table "education.liste_etab" (à adapter)
   let setRNE = new Set();
   for (let row of rCols.rows) {
     setRNE.add(row.code_rne);
@@ -578,8 +578,8 @@ async function applyCollegesPartial(arrayCarreLoc, colCrit, collegesByCarre) {
   let nomCollegeByRNE = {};
   if (arrRNE.length) {
     const qNom = `
-      SELECT code_rne, nom_college, adresse, code_postal, commune
-      FROM education_colleges.liste_colleges
+      SELECT code_rne, appellation_officielle, adresse_uai, code_postal_uai, libelle_commune
+      FROM education.liste_etab
       WHERE code_rne = ANY($1)
     `;
     let rcNom = await pool.query(qNom, [arrRNE]);
