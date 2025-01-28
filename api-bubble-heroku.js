@@ -769,56 +769,67 @@ app.post('/get_carreaux_filtre', async (req, res) => {
       });
     }
 
-    // 8c) Regroupement par communes
-      console.time('I) Communes regroupement');
+    // 8c) Communes regroument (ancienne partie "I)")
+    console.time('I) Communes regroupement');
 
-      // Requête pour regrouper les carreaux par commune
-      const queryCommunes = `
-        WITH selected_ids AS (
-          SELECT unnest($1::text[]) AS id
-        ),
-        expanded AS (
-          SELECT unnest(g.insee_com) AS insee
-          FROM decoupages.grille200m_metropole g
-          JOIN selected_ids s ON g.idinspire = s.id
-        )
-        SELECT 
-          e.insee AS insee_com,
-          c.nom AS nom_com,
-          c.insee_dep,
-          c.nom_dep,
-          COUNT(*) AS nb_carreaux
-        FROM expanded e
-        JOIN decoupages.communes c
-           ON (c.insee_com = e.insee OR c.insee_arm = e.insee)
-        WHERE e.insee = ANY($2::text[])
-        GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
-        ORDER BY nb_carreaux DESC
-      `;
+  // Si communesFinal.length = 0, c'est qu'il n'y avait plus de commune après insécurité
+  if (!communesFinal.length) {
+    // => On renvoie un tableau communes vide
+    console.log('Pas de communesFinal => communesData = []');
+    var communesData = [];
+    console.timeEnd('I) Communes regroupement');
 
-      // On passe les IDs des carreaux et les communes finales en paramètres
-      const communesRes = await pool.query(queryCommunes, [
-        intersectionSet,  // IDs des carreaux finaux
-        communesFinal     // Liste des communes finales
-      ]);
+  } else {
+    // Sinon on fait la requête d'agrégation
 
-      console.timeEnd('I) Communes regroupement');
-      console.log('=> Nombre de communes distinctes =', communesRes.rowCount);
+    const queryCommunes = `
+      WITH selected_ids AS (
+        SELECT unnest($1::text[]) AS id
+      ),
+      expanded AS (
+        SELECT unnest(g.insee_com) AS insee
+        FROM decoupages.grille200m_metropole g
+        JOIN selected_ids s ON g.idinspire = s.id
+      )
+      SELECT
+        e.insee AS insee_com,
+        c.nom AS nom_com,
+        c.insee_dep,
+        c.nom_dep,
+        COUNT(*) AS nb_carreaux
+      FROM expanded e
+      JOIN decoupages.communes c
+        ON ( c.insee_com = e.insee OR c.insee_arm = e.insee )
+      WHERE e.insee = ANY($2::text[])
+      GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
+      ORDER BY nb_carreaux DESC
+    `;
 
-      // Mapper les résultats pour construire la partie “communes”
-      const communesData = communesRes.rows.map(row => ({
-        insee_com: row.insee_com,
-        nom_com: row.nom_com,
-        insee_dep: row.insee_dep,
-        nom_dep: row.nom_dep,
-        nb_carreaux: Number(row.nb_carreaux)
-      }));
+    // On envoie 2 paramètres:
+    //  - $1 = intersectionSet (carreaux finaux)
+    //  - $2 = communesFinal (les communes filtrées)
+    let communesRes = await pool.query(queryCommunes, [
+      intersectionSet,
+      communesFinal
+    ]);
+
+    console.timeEnd('I) Communes regroupement');
+    console.log('=> Nombre de communes distinctes =', communesRes.rowCount);
+
+    var communesData = communesRes.rows.map(row => ({
+      insee_com : row.insee_com,
+      nom_com   : row.nom_com,
+      insee_dep : row.insee_dep,
+      nom_dep   : row.nom_dep,
+      nb_carreaux: Number(row.nb_carreaux)
+    }));
+  }
 
     // 9) Réponse
     const finalResp = {
       nb_carreaux: intersectionSet.length,
       carreaux: carreauxDetail
-      communes: communesData // Ajout du regroupement par communes ici
+      communes: communesData      // agrégation par commune
     };
 
     console.timeEnd('TOTAL /get_carreaux_filtre');
