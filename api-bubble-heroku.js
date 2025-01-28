@@ -828,7 +828,7 @@ app.post('/get_carreaux_filtre', async (req, res) => {
     // 9) Réponse
     const finalResp = {
       nb_carreaux: intersectionSet.length,
-      carreaux: carreauxDetail
+      carreaux: carreauxDetail,
       communes: communesData      // agrégation par commune
     };
 
