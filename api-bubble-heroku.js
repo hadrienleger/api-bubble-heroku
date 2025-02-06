@@ -1,7 +1,6 @@
 /****************************************************
- * Fichier : api-bubble-heroku.js
+ * Fichier : api-bubble-heroku_v2_iris.js
  ****************************************************/
-
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
@@ -32,16 +31,18 @@ app.get('/ping', (req, res) => {
   res.json({ message: 'pong', date: new Date() });
 });
 
-// ---------------------------------------------------------------------
-// A) Fonctions utilitaires
-// ---------------------------------------------------------------------
+// --------------------------------------------------------------
+// A) Fonctions utilitaires (intersection, union, différence)
+// --------------------------------------------------------------
 function intersectArrays(arrA, arrB) {
   const setB = new Set(arrB);
   return arrA.filter(x => setB.has(x));
 }
 function unionArrays(arrA, arrB) {
   const setA = new Set(arrA);
-  for (const x of arrB) setA.add(x);
+  for (const x of arrB) {
+    setA.add(x);
+  }
   return Array.from(setA);
 }
 function differenceArrays(arrA, arrB) {
@@ -49,9 +50,9 @@ function differenceArrays(arrA, arrB) {
   return arrA.filter(x => !setB.has(x));
 }
 
-// ---------------------------------------------------------------------
-// B) Détection activation des critères
-// ---------------------------------------------------------------------
+// --------------------------------------------------------------
+// B) Vérification d'activation des critères
+// --------------------------------------------------------------
 function isDVFActivated(dvf) {
   if (!dvf) return false;
   const hasType    = dvf.propertyTypes && dvf.propertyTypes.length>0;
@@ -61,11 +62,15 @@ function isDVFActivated(dvf) {
   const hasYears   = dvf.years &&   (dvf.years.min!=null   || dvf.years.max!=null);
   return (hasType || hasBudget || hasSurface || hasRooms || hasYears);
 }
-function isFilosofiActivated(filo) {
-  if (!filo) return false;
-  const hasNv = filo.nv_moyen && (filo.nv_moyen.min!=null || filo.nv_moyen.max!=null);
-  const hasPart = filo.part_log_soc && (filo.part_log_soc.min!=null || filo.part_log_soc.max!=null);
-  return (hasNv || hasPart);
+function isRevenusActivated(rev) {
+  if (!rev) return false;
+  if (rev.mediane && (rev.mediane.min!=null || rev.mediane.max!=null)) return true;
+  return false;
+}
+function isLogSocActivated(ls) {
+  if (!ls) return false;
+  if (ls.part_log_soc && (ls.part_log_soc.min!=null || ls.part_log_soc.max!=null)) return true;
+  return false;
 }
 function isCollegesActivated(col) {
   if (!col) return false;
@@ -78,10 +83,11 @@ function isEcolesActivated(ec) {
   return false;
 }
 
-// ---------------------------------------------------------------------
-// C) getCommunesFromDepartements
-// ---------------------------------------------------------------------
+// --------------------------------------------------------------
+// C) Récupérer communes à partir de départements
+// --------------------------------------------------------------
 async function getCommunesFromDepartements(depCodes) {
+  // renvoie la liste de communes pour un array de code départements
   let allCommunes = [];
   for (let dep of depCodes) {
     const query = `
@@ -106,39 +112,38 @@ async function getCommunesFromDepartements(depCodes) {
   return Array.from(new Set(allCommunes));
 }
 
-// ---------------------------------------------------------------------
-// D) getCarresLocalisationAndInsecurite
-//     => retourne arrayCarreLoc ET communesFinal
-// ---------------------------------------------------------------------
-async function getCarresLocalisationAndInsecurite(params, criteria) {
+// --------------------------------------------------------------
+// D) getIrisLocalisationAndInsecurite
+//     1) Récup communes (type com/dep)
+//     2) Filtre sur insécurité => communesFinal
+//     3) Récup IRIS correspondants
+// --------------------------------------------------------------
+async function getIrisLocalisationAndInsecurite(params, insecu) {
   console.time('A) localiser communes');
   let communesSelection = [];
 
   if (params.code_type === 'com') {
     communesSelection = params.codes;
-  }
-  else if (params.code_type === 'dep') {
+  } else if (params.code_type === 'dep') {
     let allCom = [];
     for (let dep of params.codes) {
       let comDep = await getCommunesFromDepartements([dep]);
       allCom.push(...comDep);
     }
     communesSelection = Array.from(new Set(allCom));
-  }
-  else {
+  } else {
     throw new Error('code_type doit être "com" ou "dep".');
   }
-
   console.log('=> communesSelection.length =', communesSelection.length);
   console.timeEnd('A) localiser communes');
 
   if (!communesSelection.length) {
-    return { arrayCarreLoc: [], communesFinal: [] };
+    return { arrayIrisLoc: [], communesFinal: [] };
   }
 
-  // B) insécurité
+  // B) insécurité => note >= insecu.min
   let communesFinal = communesSelection;
-  if (criteria?.insecurite?.min != null) {
+  if (insecu && insecu.min != null) {
     console.time('B) insecurite query');
     const qInsecu = `
       SELECT insee_com
@@ -146,7 +151,7 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
       WHERE note_sur_20 >= $1
         AND insee_com = ANY($2)
     `;
-    let resInsec = await pool.query(qInsecu, [criteria.insecurite.min, communesFinal]);
+    let resInsec = await pool.query(qInsecu, [insecu.min, communesFinal]);
     console.timeEnd('B) insecurite query');
 
     let communesInsecOk = resInsec.rows.map(r => r.insee_com);
@@ -158,45 +163,48 @@ async function getCarresLocalisationAndInsecurite(params, criteria) {
     console.log('=> communesFinal (after insecurite) =', communesFinal.length);
 
     if (!communesFinal.length) {
-      return { arrayCarreLoc: [], communesFinal: [] };
+      return { arrayIrisLoc: [], communesFinal: [] };
     }
   }
 
-  // C) grille200m => arrayCarreLoc
-  console.time('C) grille200m query');
-  const qGrille = `
-    SELECT idinspire AS id_carre_200m
-    FROM decoupages.grille200m_metropole
-    WHERE insee_com && $1
+  // C) IRIS => table decoupages.iris_2022
+  console.time('C) iris_2022 query');
+  const qIris = `
+    SELECT code_iris
+    FROM decoupages.iris_2022
+    WHERE insee_com = ANY($1)
   `;
-  let resCar = await pool.query(qGrille, [communesFinal]);
-  console.timeEnd('C) grille200m query');
+  let rIris = await pool.query(qIris, [communesFinal]);
+  console.timeEnd('C) iris_2022 query');
 
-  let arrayCarreLoc = resCar.rows.map(r => r.id_carre_200m);
-  console.log('=> arrayCarreLoc.length =', arrayCarreLoc.length);
+  let arrayIrisLoc = rIris.rows.map(rr => rr.code_iris);
+  console.log('=> arrayIrisLoc.length =', arrayIrisLoc.length);
 
-  return { arrayCarreLoc, communesFinal };
+  return { arrayIrisLoc, communesFinal };
 }
 
-// ---------------------------------------------------------------------
-// E) applyDVF => intersection stricte + stockage dvfCountByCarre
-// ---------------------------------------------------------------------
-async function applyDVF(arrayCarreLoc, dvfCriteria, dvfCountByCarre) {
-  // dvfCountByCarre : un objet passé en param pour le remplir
+// --------------------------------------------------------------
+// E) Filtrage DVF => intersection stricte
+// --------------------------------------------------------------
+async function applyDVF(arrayIrisLoc, dvfCriteria) {
+  console.time('D) DVF: activation?');
   if (!isDVFActivated(dvfCriteria)) {
-    return arrayCarreLoc;
+    console.timeEnd('D) DVF: activation?');
+    return { irisSet: arrayIrisLoc, dvfCountByIris: {} };
   }
-  console.time('D) DVF build query');
+  console.timeEnd('D) DVF: activation?');
+
+  console.time('D) DVF: build query');
   let whereClauses = [];
   let values = [];
   let idx = 1;
 
-  whereClauses.push(`id_carre_200m = ANY($${idx})`);
-  values.push(arrayCarreLoc);
+  whereClauses.push(`code_iris = ANY($${idx})`);
+  values.push(arrayIrisLoc);
   idx++;
 
   if (dvfCriteria.propertyTypes && dvfCriteria.propertyTypes.length>0) {
-    whereClauses.push(`codtyploc = ANY($${idx})`);
+    whereClauses.push(`codtypbien = ANY($${idx})`);
     values.push(dvfCriteria.propertyTypes);
     idx++;
   }
@@ -248,596 +256,543 @@ async function applyDVF(arrayCarreLoc, dvfCriteria, dvfCountByCarre) {
       idx++;
     }
   }
-  console.timeEnd('D) DVF build query');
+  console.timeEnd('D) DVF: build query');
 
   const wh = `WHERE ` + whereClauses.join(' AND ');
   const query = `
-    SELECT id_carre_200m, COUNT(*)::int AS nb_mut
+    SELECT code_iris, COUNT(*)::int AS nb_mut
     FROM dvf_filtre.dvf_simplifie
     ${wh}
-    GROUP BY id_carre_200m
+    GROUP BY code_iris
   `;
-  console.time('D) DVF exec query');
+  console.time('D) DVF: exec query');
   let res = await pool.query(query, values);
-  console.timeEnd('D) DVF exec query');
+  console.timeEnd('D) DVF: exec query');
 
-  // remplir dvfCountByCarre
-  let idsDVF = [];
+  console.log('=> DVF rowCount =', res.rowCount);
+
+  let dvfCountByIris = {};
+  let irisOK = [];
   for (let row of res.rows) {
-    let id = row.id_carre_200m;
-    let nb = Number(row.nb_mut);
-    dvfCountByCarre[id] = nb;
-    idsDVF.push(id);
+    dvfCountByIris[row.code_iris] = Number(row.nb_mut);
+    irisOK.push(row.code_iris);
   }
-  console.log('=> DVF rowCount =', idsDVF.length);
 
-  console.time('D) DVF intersection');
-  let result = intersectArrays(arrayCarreLoc, idsDVF);
-  console.timeEnd('D) DVF intersection');
-  console.log('=> after DVF intersectionSet.length =', result.length);
+  console.time('D) DVF: intersection');
+  let irisSet = intersectArrays(arrayIrisLoc, irisOK);
+  console.timeEnd('D) DVF: intersection');
+  console.log('=> after DVF intersectionSet.length =', irisSet.length);
 
-  return result;
+  return { irisSet, dvfCountByIris };
 }
 
-// ---------------------------------------------------------------------
-// F) applyFilosofi => intersection stricte + stockage { nv_moyen, part_log_soc }
-// ---------------------------------------------------------------------
-async function applyFilosofi(arrayCarreLoc, filo, filoByCarre) {
-  if (!isFilosofiActivated(filo)) {
-    return arrayCarreLoc;
+// --------------------------------------------------------------
+// F) Filtrage revenus déclarés => intersection stricte
+// --------------------------------------------------------------
+async function applyRevenus(irisList, revCriteria) {
+  console.time('E)1) Revenus-declares: activation?');
+  if (!isRevenusActivated(revCriteria)) {
+    console.timeEnd('E)1) Revenus-declares: activation?');
+    return { irisSet: irisList, revenusByIris: {} };
   }
-  console.time('E) Filosofi build query');
-  let whereClauses = [];
-  let values = [];
-  let idx = 1;
+  console.timeEnd('E)1) Revenus-declares: activation?');
 
-  whereClauses.push(`idcar_200m = ANY($${idx})`);
-  values.push(arrayCarreLoc);
-  idx++;
+  console.time('E)1) Revenus-declares: build query');
+  let w = [];
+  let v = [];
+  let i = 1;
+  w.push(`code_iris = ANY($${i})`);
+  v.push(irisList);
+  i++;
 
-  if (filo.nv_moyen) {
-    if (filo.nv_moyen.min != null) {
-      whereClauses.push(`nv_moyen >= $${idx}`);
-      values.push(filo.nv_moyen.min);
-      idx++;
+  if (revCriteria.mediane) {
+    if (revCriteria.mediane.min != null) {
+      w.push(`mediane >= $${i}`);
+      v.push(revCriteria.mediane.min);
+      i++;
     }
-    if (filo.nv_moyen.max != null) {
-      whereClauses.push(`nv_moyen <= $${idx}`);
-      values.push(filo.nv_moyen.max);
-      idx++;
-    }
-  }
-  if (filo.part_log_soc) {
-    if (filo.part_log_soc.min!=null) {
-      whereClauses.push(`part_log_soc >= $${idx}`);
-      values.push(filo.part_log_soc.min);
-      idx++;
-    }
-    if (filo.part_log_soc.max!=null) {
-      whereClauses.push(`part_log_soc <= $${idx}`);
-      values.push(filo.part_log_soc.max);
-      idx++;
+    if (revCriteria.mediane.max != null) {
+      w.push(`mediane <= $${i}`);
+      v.push(revCriteria.mediane.max);
+      i++;
     }
   }
-  const wh = `WHERE ` + whereClauses.join(' AND ');
-  console.timeEnd('E) Filosofi build query');
+  console.timeEnd('E){"text":"filosofi.logements_sociaux_iris_hl_2021","objUrl":"/browser/table/obj/1/1/16388/25754250/26184087","nodeType":"table","cur":{"from":39,"to":39}}1) Revenus-declares: build query');
 
-  const q = `
-    SELECT idcar_200m, nv_moyen, part_log_soc
-    FROM filosofi.c200_france_2019
-    ${wh}
+  const query = `
+    SELECT code_iris, mediane
+    FROM filosofi.rev_decl_hl_2021
+    WHERE ${w.join(' AND ')}
   `;
-  console.time('E) Filosofi exec query');
-  let res = await pool.query(q, values);
-  console.timeEnd('E) Filosofi exec query');
+  console.time('E)1) Revenus-declares: exec query');
+  let r = await pool.query(query, v);
+  console.timeEnd('E)1) Revenus-declares: exec query');
 
-  let idsFilo = [];
-  for (let row of res.rows) {
-    let id = row.idcar_200m;
-    filoByCarre[id] = {
-      nv_moyen: Number(row.nv_moyen),
-      part_log_soc: Number(row.part_log_soc)
+  console.log(`=> Revenus-declares rowCount = ${r.rowCount}`);
+
+  let revenusByIris = {};
+  let irisOK = [];
+  for (let row of r.rows) {
+    revenusByIris[row.code_iris] = {
+      mediane: Number(row.mediane)
     };
-    idsFilo.push(id);
+    irisOK.push(row.code_iris);
   }
-  console.log('=> Filosofi rowCount =', idsFilo.length);
 
-  console.time('E) Filosofi intersection');
-  let result = intersectArrays(arrayCarreLoc, idsFilo);
-  console.timeEnd('E) Filosofi intersection');
-  console.log('=> after Filosofi intersectionSet.length =', result.length);
+  console.time('E)1) Revenus-declares: intersection');
+  let irisSet = intersectArrays(irisList, irisOK);
+  console.timeEnd('E)1) Revenus-declares: intersection');
+  console.log(`=> after Revenus-declares intersectionSet.length = ${irisSet.length}`);
 
-  return result;
+  return { irisSet, revenusByIris };
 }
 
-// ---------------------------------------------------------------------
-// G) Critère partiel Ecoles => ecolesByCarre
-// ---------------------------------------------------------------------
-async function applyEcolesPartial(arrayCarreLoc, ecolesCrit, ecolesByCarre) {
-  if (!isEcolesActivated(ecolesCrit)) {
-    // On ne remplit rien => par défaut "ecolesByCarre[id] = 'non activé'" ?
-    // Ou on laisse undefined
-    return arrayCarreLoc;
+// --------------------------------------------------------------
+// G) Filtrage Logements sociaux => intersection stricte
+// --------------------------------------------------------------
+async function applyLogSoc(irisList, lsCriteria) {
+  console.time('F)1) LogSoc: activation?');
+  if (!isLogSocActivated(lsCriteria)) {
+    console.timeEnd('F)1) LogSoc: activation?');
+    return { irisSet: irisList, logSocByIris: {} };
   }
-  console.time('G) Ecoles');
+  console.timeEnd('F)1) LogSoc: activation?');
 
-  // 1) subset Paris
-  console.time('G) Ecoles subsetCouvert query');
-  const qParis = `
-    SELECT idinspire
-    FROM decoupages.grille200m_metropole
-    WHERE idinspire = ANY($1)
-      AND EXISTS (
-        SELECT 1 FROM unnest(insee_com) c
-        WHERE c ILIKE '751%'
-      )
+  console.time('F)1) LogSoc: build query');
+  let w = [];
+  let v = [];
+  let i = 1;
+
+  // Remplace "iris" si ta table a "code_iris" comme nom
+  w.push(`iris = ANY($${i})`);
+  v.push(irisList);
+  i++;
+
+  if (lsCriteria.part_log_soc) {
+    if (lsCriteria.part_log_soc.min!=null) {
+      w.push(`part_log_soc >= $${i}`);
+      v.push(lsCriteria.part_log_soc.min);
+      i++;
+    }
+    if (lsCriteria.part_log_soc.max!=null) {
+      w.push(`part_log_soc <= $${i}`);
+      v.push(lsCriteria.part_log_soc.max);
+      i++;
+    }
+  }
+  console.timeEnd('F)1) LogSoc: build query');
+
+  const query = `
+    SELECT iris AS code_iris, part_log_soc
+    FROM filosofi.logements_sociaux_iris_hl_2021
+    WHERE ${w.join(' AND ')}
   `;
-  let rParis = await pool.query(qParis, [arrayCarreLoc]);
-  console.timeEnd('G) Ecoles subsetCouvert query');
+  console.time('F)1) LogSoc: exec query');
+  let r = await pool.query(query, v);
+  console.timeEnd('F)1) LogSoc: exec query');
 
-  let subsetCouvert = rParis.rows.map(r => r.idinspire);
+  console.log(`=> LogSoc rowCount = ${r.rowCount}`);
+
+  let logSocByIris = {};
+  let irisOK = [];
+  for (let row of r.rows) {
+    logSocByIris[row.code_iris] = { part_log_soc: Number(row.part_log_soc) };
+    irisOK.push(row.code_iris);
+  }
+
+  console.time('F)1) LogSoc: intersection');
+  let irisSet = intersectArrays(irisList, irisOK);
+  console.timeEnd('F)1) LogSoc: intersection');
+  console.log(`=> after LogSoc intersectionSet.length = ${irisSet.length}`);
+
+  return { irisSet, logSocByIris };
+}
+
+// --------------------------------------------------------------
+// H) Critère partiel Ecoles => intersection stricte si "in-scope"
+// --------------------------------------------------------------
+async function applyEcolesPartial(irisList, ecolesCrit) {
+  console.time('G) Ecoles: activation?');
+  if (!isEcolesActivated(ecolesCrit)) {
+    console.timeEnd('G) Ecoles: activation?');
+    // => non activé => on met "non-activé" pour tous
+    let ecolesByIris = {};
+    for (let iris of irisList) {
+      ecolesByIris[iris] = "non-activé";
+    }
+    return ecolesByIris;
+  }
+  console.timeEnd('G) Ecoles: activation?');
+
+  console.time('G) Ecoles: subset coverage');
+  // Récup tous les IRIS couverts
+  const qDistinct = `
+    SELECT DISTINCT code_iris
+    FROM education_ecoles.iris_rne_ipsecoles
+  `;
+  let rDistinct = await pool.query(qDistinct);
+  let setCouvert = new Set(rDistinct.rows.map(rr => rr.code_iris));
+  let subsetCouvert = irisList.filter(iris => setCouvert.has(iris));
+  console.timeEnd('G) Ecoles: subset coverage');
   console.log('G) Ecoles => subsetCouvert.length =', subsetCouvert.length);
 
-  // 2) Si subsetCouvert = 0 => tout le monde est "hors-scope"
-  if (!subsetCouvert.length) {
-    // On met ecolesByCarre[id] = "hors-scope" pour tous
-    for (let id of arrayCarreLoc) {
-      ecolesByCarre[id] = "hors-scope";
-    }
-    console.timeEnd('G) Ecoles');
-    return arrayCarreLoc;
+  // => Hors-scope
+  let ecolesByIris = {};
+  let subsetHors = differenceArrays(irisList, subsetCouvert);
+  for (let iris of subsetHors) {
+    ecolesByIris[iris] = "hors-scope";
   }
 
-  // 3) Filtrer subsetCouvert via pivot + ips
-  let wE = [];
-  let vE = [];
-  let idx = 1;
+  // 2) intersection stricte sur subsetCouvert + IPS
+  console.time('G) Ecoles: build query');
+  let w = [];
+  let v = [];
+  let i=1;
 
-  wE.push(`id_carre_200m = ANY($${idx})`);
-  vE.push(subsetCouvert);
-  idx++;
+  w.push(`code_iris = ANY($${i})`);
+  v.push(subsetCouvert);
+  i++;
 
   if (ecolesCrit.ips_min!=null) {
-    wE.push(`ips >= $${idx}`);
-    vE.push(ecolesCrit.ips_min);
-    idx++;
+    w.push(`ips >= $${i}`);
+    v.push(ecolesCrit.ips_min);
+    i++;
   }
   if (ecolesCrit.ips_max!=null) {
-    wE.push(`ips <= $${idx}`);
-    vE.push(ecolesCrit.ips_max);
-    idx++;
+    w.push(`ips <= $${i}`);
+    v.push(ecolesCrit.ips_max);
+    i++;
   }
+  console.timeEnd('G) Ecoles: build query');
 
-  // Requête pivot
-  const qEco = `
-    SELECT id_carre_200m, code_rne, ips
-    FROM education_ecoles.idcar200m_rne_ipsecoles
-    WHERE ${wE.join(' AND ')}
+  const query = `
+    SELECT code_iris, code_rne, ips
+    FROM education_ecoles.iris_rne_ipsecoles
+    WHERE ${w.join(' AND ')}
   `;
-  console.time('G) Ecoles pivot query');
-  let rEco = await pool.query(qEco, vE);
-  console.timeEnd('G) Ecoles pivot query');
 
-  // => On a (id_carre_200m, code_rne, ips). On veut le nom de l'école.
-  //   On fait un 2e mini-join sur la table "liste_etab" (adapte le nom):
-  //   ex. SELECT code_rne, appellation_officielle, adresse_uai, code_postal_uai, libcommune_uai
-  //   FROM education.liste_etab
-  //   WHERE code_rne in (distinct list)
+  console.time('G) Ecoles: exec query');
+  let rPivot = await pool.query(query, v);
+  console.timeEnd('G) Ecoles: exec query');
+  console.log('=> EcolesPivot rowCount =', rPivot.rowCount);
 
-  // 3.b) Récupérer tous les code_rne => set
-  let allRNE = new Set();
-  for (let row of rEco.rows) {
-    allRNE.add(row.code_rne);
-  }
-  let listRNE = Array.from(allRNE);
+  let irisFoundSet = new Set();
+  let mapEcoles = {}; // code_iris => array d'obj { code_rne, ips }
 
-  // Si on a besoin de noms
-  let nomEcolesByRNE = {};  // rne => { nom_ecole, adrs, ... }
-  if (listRNE.length) {
-    const placeholders = listRNE.map((_,i)=>`$${i+1}`).join(',');
-    const qNom = `
-      SELECT code_rne, appellation_officielle, adresse_uai, code_postal_uai, libelle_commune
-      FROM education.liste_etab
-      WHERE code_rne = ANY($1)
-    `;
-    let rNom = await pool.query(qNom, [listRNE]);
-    for (let row of rNom.rows) {
-      let rne = row.code_rne;
-      nomEcolesByRNE[rne] = {
-        nom_ecole: row.appellation_officielle,
-        adresse: `${row.adresse_uai} ${row.code_postal_uai} ${row.libelle_commune}`
-      };
+  for (let row of rPivot.rows) {
+    irisFoundSet.add(row.code_iris);
+    if (!mapEcoles[row.code_iris]) {
+      mapEcoles[row.code_iris] = [];
     }
-  }
-
-  // 4) On regroupe par idCarre
-  //    ecolesByCarre[id] = array d'objets { code_rne, nom_ecole, ips, ... }
-  let subsetCouvertFiltreSet = new Set(); // pour l'intersection partielle
-
-  for (let row of rEco.rows) {
-    let id = row.id_carre_200m;
-    subsetCouvertFiltreSet.add(id);
-
-    if (!ecolesByCarre[id] || ecolesByCarre[id]==="hors-scope") {
-      ecolesByCarre[id] = [];
-    }
-    let rne = row.code_rne;
-    let info = nomEcolesByRNE[rne] || {};
-    ecolesByCarre[id].push({
-      code_rne: rne,
-      nom_ecole: info.nom_ecole || '(nom inconnu)',
-      adresse: info.adresse || '',
+    mapEcoles[row.code_iris].push({
+      code_rne: row.code_rne,
       ips: Number(row.ips)
     });
   }
 
-  // => tous les carreaux dans subsetCouvert, mais pas dans subsetCouvertFiltreSet,
-  //    reçoivent un tableau vide ? ou "count=0" ? A priori, c’est un “0 correspondances” possible.
-  //    => Mais la doc partielle dit : on conserve le carreau hors intersection, 
-  //       => sauf qu'il n'a pas d'école répondant aux min..max d'IPS.
-  // on met ecolesByCarre[id] = [] si c'est dans subsetCouvert, 
-  //    ou "hors-scope" si c'est hors subsetCouvert
+  // => IRIS couverts mais pas dans irisFoundSet => => intersection stricte => array vide
+  let subsetFiltre = Array.from(irisFoundSet);
 
-  for (let id of subsetCouvert) {
-    if (!subsetCouvertFiltreSet.has(id)) {
-      // => 0 correspondances => ecolesByCarre[id] = []
-      ecolesByCarre[id] = [];
-    }
-  }
-  for (let id of arrayCarreLoc) {
-    if (!subsetCouvert.includes(id)) {
-      // => hors scope => ecolesByCarre[id] = "hors-scope"
-      ecolesByCarre[id] = "hors-scope";
+  for (let iris of subsetCouvert) {
+    if (!irisFoundSet.has(iris)) {
+      // => 0 écols => => intersection stricte => on exclut ou on met []
+      // Cf. v1 => partiel => on mettait [] => IRIS est "hors" ce critère?
+      // Adapte à ta logique. Je mets []:
+      mapEcoles[iris] = [];
     }
   }
 
-  // 5) Calcul final union
-  let subsetCouvertFiltre = Array.from(subsetCouvertFiltreSet);
-  let subsetHors = differenceArrays(arrayCarreLoc, subsetCouvert);
-  let result = unionArrays(subsetCouvertFiltre, subsetHors);
+  // Remplir ecolesByIris
+  for (let iris of subsetFiltre) {
+    ecolesByIris[iris] = mapEcoles[iris];
+  }
+  for (let iris of subsetCouvert) {
+    if (!irisFoundSet.has(iris)) {
+      ecolesByIris[iris] = [];
+    }
+  }
 
-  console.log(`G) Ecoles => result.length = ${result.length}`);
-  console.timeEnd('G) Ecoles');
-  return result;
+  // => hors-scope on a déjà "hors-scope"
+  console.time('G) Ecoles: end');
+  console.timeEnd('G) Ecoles: end');
+  return ecolesByIris;
 }
 
-// ---------------------------------------------------------------------
-// H) Critère partiel Collèges => collegesByCarre
-// ---------------------------------------------------------------------
-async function applyCollegesPartial(arrayCarreLoc, colCrit, collegesByCarre) {
+// --------------------------------------------------------------
+// I) Critère partiel Collèges => intersection stricte si in-scope
+// --------------------------------------------------------------
+async function applyCollegesPartial(irisList, colCrit) {
+  console.time('F) Colleges: activation?');
   if (!isCollegesActivated(colCrit)) {
-    return arrayCarreLoc;
+    console.timeEnd('F) Colleges: activation?');
+    let collegesByIris = {};
+    for (let iris of irisList) {
+      collegesByIris[iris] = "non-activé";
+    }
+    return collegesByIris;
   }
-  console.time('F) Colleges');
+  console.timeEnd('F) Colleges: activation?');
 
-  // departements manquants
+  console.time('F) Colleges: subset coverage');
+  // ex. DEPS_MANQUANTS
   const DEPS_MANQUANTS = ['17','22','2A','29','2B','52','56'];
 
-  console.time('F) Colleges subsetCouvert query');
-  const qDep = `
-    SELECT idinspire
-    FROM decoupages.grille200m_metropole
-    WHERE idinspire = ANY($1)
-      AND NOT EXISTS (
-        SELECT 1
-        FROM unnest(insee_dep) d
-        WHERE d = ANY($2)
-      )
+  const qCouv = `
+    SELECT code_iris
+    FROM decoupages.iris_2022
+    WHERE code_iris = ANY($1)
+      AND insee_dep <> ALL($2)
   `;
-  let rCouv = await pool.query(qDep, [arrayCarreLoc, DEPS_MANQUANTS]);
-  console.timeEnd('F) Colleges subsetCouvert query');
-
-  let subsetCouvert = rCouv.rows.map(r => r.idinspire);
+  let rCouv = await pool.query(qCouv, [irisList, DEPS_MANQUANTS]);
+  let subsetCouvert = rCouv.rows.map(rr => rr.code_iris);
+  console.timeEnd('F) Colleges: subset coverage');
   console.log('F) Colleges => subsetCouvert.length =', subsetCouvert.length);
 
-  if (!subsetCouvert.length) {
-    // => tout est hors-scope
-    for (let id of arrayCarreLoc) {
-      collegesByCarre[id] = "hors-scope";
-    }
-    console.timeEnd('F) Colleges');
-    return arrayCarreLoc;
+  // hors-scope
+  let collegesByIris = {};
+  let subsetHors = differenceArrays(irisList, subsetCouvert);
+  for (let iris of subsetHors) {
+    collegesByIris[iris] = "hors-scope";
   }
 
-  // 2) table pivot + figaro
-  let wCols = [];
-  let vals = [];
-  let iC = 1;
+  // 2) pivot
+  console.time('F) Colleges: build query');
+  let w = [];
+  let v = [];
+  let i=1;
 
-  wCols.push(`id_carre_200m = ANY($${iC})`);
-  vals.push(subsetCouvert);
-  iC++;
+  w.push(`code_iris = ANY($${i})`);
+  v.push(subsetCouvert);
+  i++;
 
-  if (colCrit.valeur_figaro_min != null) {
-    wCols.push(`niveau_college_figaro >= $${iC}`);
-    vals.push(colCrit.valeur_figaro_min);
-    iC++;
+  if (colCrit.valeur_figaro_min!=null) {
+    w.push(`niveau_college_figaro >= $${i}`);
+    v.push(colCrit.valeur_figaro_min);
+    i++;
   }
-  if (colCrit.valeur_figaro_max != null) {
-    wCols.push(`niveau_college_figaro <= $${iC}`);
-    vals.push(colCrit.valeur_figaro_max);
-    iC++;
+  if (colCrit.valeur_figaro_max!=null) {
+    w.push(`niveau_college_figaro <= $${i}`);
+    v.push(colCrit.valeur_figaro_max);
+    i++;
   }
+  console.timeEnd('F) Colleges: build query');
 
   const qPivot = `
-    SELECT DISTINCT id_carre_200m, code_rne, niveau_college_figaro
-    FROM education_colleges.idcar200m_rne_niveaucolleges
-    WHERE ${wCols.join(' AND ')}
+    SELECT code_iris, code_rne, niveau_college_figaro
+    FROM education_colleges.iris_rne_niveaucolleges
+    WHERE ${w.join(' AND ')}
   `;
-  console.time('F) Colleges pivot query');
-  let rCols = await pool.query(qPivot, vals);
-  console.timeEnd('F) Colleges pivot query');
+  console.time('F) Colleges: exec query');
+  let rCols = await pool.query(qPivot, v);
+  console.timeEnd('F) Colleges: exec query');
+  console.log('=> CollegesPivot rowCount =', rCols.rowCount);
 
-  // 2b) Récupérer noms => table "education.liste_etab" (à adapter)
-  let setRNE = new Set();
+  let irisFoundSet = new Set();
+  let mapCols = {};
+
   for (let row of rCols.rows) {
-    setRNE.add(row.code_rne);
-  }
-  let arrRNE = Array.from(setRNE);
-
-  let nomCollegeByRNE = {};
-  if (arrRNE.length) {
-    const qNom = `
-      SELECT code_rne, appellation_officielle, adresse_uai, code_postal_uai, libelle_commune
-      FROM education.liste_etab
-      WHERE code_rne = ANY($1)
-    `;
-    let rcNom = await pool.query(qNom, [arrRNE]);
-    for (let row of rcNom.rows) {
-      nomCollegeByRNE[row.code_rne] = {
-        nom_college: row.appellation_officielle,
-        adresse: `${row.adresse_uai} ${row.code_postal_uai} ${row.libelle_commune}`
-      };
+    irisFoundSet.add(row.code_iris);
+    if (!mapCols[row.code_iris]) {
+      mapCols[row.code_iris] = [];
     }
-  }
-
-  // 3) On regroupe
-  let setCovFilt = new Set();
-  for (let row of rCols.rows) {
-    let id = row.id_carre_200m;
-    setCovFilt.add(id);
-
-    if (!collegesByCarre[id] || collegesByCarre[id]==="hors-scope") {
-      collegesByCarre[id] = [];
-    }
-    let info = nomCollegeByRNE[row.code_rne] || {};
-    collegesByCarre[id].push({
+    mapCols[row.code_iris].push({
       code_rne: row.code_rne,
-      nom_college: info.nom_college || '(nom inconnu)',
-      adresse: info.adresse || '',
       valeur_figaro: Number(row.niveau_college_figaro)
     });
   }
 
-  // 4) pour subsetCouvert - setCovFilt => [] = 0 correspondances
-  let subsetCovFilt = Array.from(setCovFilt);
-  for (let id of subsetCouvert) {
-    if (!setCovFilt.has(id)) {
-      collegesByCarre[id] = [];
+  for (let iris of subsetCouvert) {
+    if (!irisFoundSet.has(iris)) {
+      // => 0 => intersection stricte => array vide
+      mapCols[iris] = [];
     }
   }
-  // 5) hors subset => "hors-scope"
-  let subsetHors = differenceArrays(arrayCarreLoc, subsetCouvert);
-  for (let id of subsetHors) {
-    collegesByCarre[id] = "hors-scope";
+
+  // remplir collegesByIris
+  for (let iris of subsetHors) {
+    // déjà = hors-scope
+  }
+  for (let iris of subsetCouvert) {
+    if (!mapCols[iris]) {
+      collegesByIris[iris] = [];
+    } else {
+      collegesByIris[iris] = mapCols[iris];
+    }
   }
 
-  // 6) union => final array
-  let result = unionArrays(subsetCovFilt, subsetHors);
-  console.log(`F) Colleges => result.length = ${result.length}`);
-
-  console.timeEnd('F) Colleges');
-  return result;
+  return collegesByIris;
 }
 
-// ---------------------------------------------------------------------
-// I) Récupérer la note d'insécurité détaillée : insecuByCarre
-//     => un array [ { insee, nom_com, note } ... ] 
-//    En admettant qu'un carreau recouvre 2 communes, on aura 2 entrées
-// ---------------------------------------------------------------------
-async function gatherInsecuDetails(intersectionSet) {
-  // On fait un unnest(insee_com), left join sur la table delinquance
-  // + decoupages.communes pour avoir le "nom_com" si besoin
-  if (!intersectionSet.length) return {};
+// --------------------------------------------------------------
+// J) gatherInsecuByIris => note d'insécurité de la commune
+// --------------------------------------------------------------
+async function gatherInsecuByIris(irisList) {
+  if (!irisList.length) return {};
 
-  // On va faire un "expanded" comme pour le regroupement communal
-  const query = `
-    WITH selected_ids AS (
-      SELECT unnest($1::text[]) AS id
-    ),
-    expanded AS (
-      SELECT g.idinspire AS id_carre, unnest(g.insee_com) AS insee
-      FROM decoupages.grille200m_metropole g
-      JOIN selected_ids s ON g.idinspire = s.id
-    )
-    SELECT e.id_carre, e.insee,
+  console.time('Insecu details: query');
+  const q = `
+    SELECT i.code_iris, i.insee_com,
            c.nom AS nom_com,
            d.note_sur_20
-    FROM expanded e
-    LEFT JOIN decoupages.communes c 
-       ON (c.insee_com = e.insee OR c.insee_arm = e.insee)
+    FROM decoupages.iris_2022 i
+    LEFT JOIN decoupages.communes c
+      ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
     LEFT JOIN delinquance.notes_insecurite_geom_complet d
-       ON d.insee_com = e.insee
+      ON d.insee_com = i.insee_com
+    WHERE i.code_iris = ANY($1)
   `;
-  let res = await pool.query(query, [intersectionSet]);
+  let r = await pool.query(q, [irisList]);
+  console.timeEnd('Insecu details: query');
 
-  let insecuByCarre = {};
-  for (let row of res.rows) {
-    let id = row.id_carre;
-    if (!insecuByCarre[id]) {
-      insecuByCarre[id] = [];
-    }
-    // note_sur_20 peut être null => communes non notées
-    if (row.insee) {
-      insecuByCarre[id].push({
-        insee: row.insee,
-        nom_com: row.nom_com || '(commune inconnue)',
-        note: row.note_sur_20 != null ? Number(row.note_sur_20) : null
-      });
-    }
+  let insecuByIris = {};
+  for (let row of r.rows) {
+    // On stocke un array, comme en V1 (même si IRIS = 1 commune)
+    insecuByIris[row.code_iris] = [{
+      insee: row.insee_com,
+      nom_com: row.nom_com || '(commune inconnue)',
+      note: row.note_sur_20 != null ? Number(row.note_sur_20) : null
+    }];
   }
-  return insecuByCarre;
+  return insecuByIris;
 }
 
-// ---------------------------------------------------------------------
-// J) POST /get_carreaux_filtre
-// ---------------------------------------------------------------------
-app.post('/get_carreaux_filtre', async (req, res) => {
+// --------------------------------------------------------------
+// K) groupByCommunes => agrégation par commune (optionnel)
+// --------------------------------------------------------------
+async function groupByCommunes(irisList, communesFinal) {
+  // si on veut un bloc "communes" dans le JSON
+  if (!irisList.length || !communesFinal.length) {
+    return [];
+  }
+
+  console.time('I) Communes regroupement');
+  const query = `
+    WITH selected_iris AS (
+      SELECT unnest($1::text[]) AS iris
+    ),
+    expanded AS (
+      SELECT s.iris, i.insee_com
+      FROM selected_iris s
+      JOIN decoupages.iris_2022 i ON i.code_iris = s.iris
+    )
+    SELECT e.insee_com, c.nom AS nom_com,
+           c.insee_dep, c.nom_dep,
+           COUNT(*) AS nb_iris
+    FROM expanded e
+    JOIN decoupages.communes c
+      ON (c.insee_com = e.insee_com OR c.insee_arm = e.insee_com)
+    WHERE e.insee_com = ANY($2::text[])
+    GROUP BY e.insee_com, c.nom, c.insee_dep, c.nom_dep
+    ORDER BY nb_iris DESC
+  `;
+  let communesRes = await pool.query(query, [irisList, communesFinal]);
+  console.timeEnd('I) Communes regroupement');
+
+  console.log('=> Nombre de communes distinctes =', communesRes.rowCount);
+
+  let communesData = communesRes.rows.map(row => ({
+    insee_com: row.insee_com,
+    nom_com: row.nom_com,
+    insee_dep: row.insee_dep,
+    nom_dep: row.nom_dep,
+    nb_iris: Number(row.nb_iris)
+  }));
+  return communesData;
+}
+
+// --------------------------------------------------------------
+// L) POST /get_iris_filtre
+// --------------------------------------------------------------
+app.post('/get_iris_filtre', async (req, res) => {
   console.log('>>> BODY RECEIVED FROM BUBBLE:', JSON.stringify(req.body, null, 2));
-  console.log('=== START /get_carreaux_filtre ===');
-  console.time('TOTAL /get_carreaux_filtre');
+  console.log('=== START /get_iris_filtre ===');
+  console.time('TOTAL /get_iris_filtre');
 
   try {
     const { params, criteria } = req.body;
     if (!params || !params.code_type || !params.codes) {
-      console.timeEnd('TOTAL /get_carreaux_filtre');
+      console.timeEnd('TOTAL /get_iris_filtre');
       return res.status(400).json({ error: 'Paramètres de localisation manquants.' });
     }
 
-    // 0) On initialise les maps
-    let dvfCountByCarre = {};    // id => nb
-    let filoByCarre = {};        // id => { nv_moyen, part_log_soc }
-    let ecolesByCarre = {};      // id => array ou "hors-scope"
-    let collegesByCarre = {};    // id => array ou "hors-scope"
-
-    // 1) Localisation + insécurité
-    const { arrayCarreLoc, communesFinal } = await getCarresLocalisationAndInsecurite(params, criteria);
-    if (!arrayCarreLoc.length) {
-      console.timeEnd('TOTAL /get_carreaux_filtre');
-      return res.json({ nb_carreaux: 0, carreaux: [] });
+    // 1) Localisation + insécurité => IRIS
+    const { arrayIrisLoc, communesFinal } = await getIrisLocalisationAndInsecurite(
+      params,
+      criteria?.insecurite
+    );
+    if (!arrayIrisLoc.length) {
+      console.timeEnd('TOTAL /get_iris_filtre');
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
 
-    // 2) DVF => intersection stricte + dvfCount
-    let newSet = await applyDVF(arrayCarreLoc, criteria?.dvf, dvfCountByCarre);
-    if (!newSet.length) {
-      console.timeEnd('TOTAL /get_carreaux_filtre');
-      return res.json({ nb_carreaux: 0, carreaux: [] });
+    // 2) DVF => intersection
+    let { irisSet: irisAfterDVF, dvfCountByIris } = await applyDVF(arrayIrisLoc, criteria?.dvf);
+    if (!irisAfterDVF.length) {
+      console.timeEnd('TOTAL /get_iris_filtre');
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
 
-    // 3) Filosofi => intersection stricte + {nv_moyen, part_log_soc}
-    newSet = await applyFilosofi(newSet, criteria?.filosofi, filoByCarre);
-    if (!newSet.length) {
-      console.timeEnd('TOTAL /get_carreaux_filtre');
-      return res.json({ nb_carreaux: 0, carreaux: [] });
+    // 3) Revenus => intersection
+    let { irisSet: irisAfterRevenus, revenusByIris } = await applyRevenus(irisAfterDVF, criteria?.revenus);
+    if (!irisAfterRevenus.length) {
+      console.timeEnd('TOTAL /get_iris_filtre');
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
 
-    // 4) Collèges => partiel
-    newSet = await applyCollegesPartial(newSet, criteria?.colleges, collegesByCarre);
-    // => pas de check si 0 => on garde hors-scope / ou array vide
-
-    // 5) Écoles => partiel
-    newSet = await applyEcolesPartial(newSet, criteria?.ecoles, ecolesByCarre);
-
-    // 6) newSet est la liste "finale" de carreaux
-    const intersectionSet = newSet;
-    console.log('=> final intersectionSet.length =', intersectionSet.length);
-    if (!intersectionSet.length) {
-      console.timeEnd('TOTAL /get_carreaux_filtre');
-      return res.json({ nb_carreaux: 0, carreaux: [] });
+    // 4) Logements sociaux => intersection
+    let { irisSet: irisAfterSoc, logSocByIris } = await applyLogSoc(irisAfterRevenus, criteria?.logsoc);
+    if (!irisAfterSoc.length) {
+      console.timeEnd('TOTAL /get_iris_filtre');
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
 
-    // 7) Récupération des notes d'insécurité (détaillées) => insecuByCarre
-    //    On fait ça même si critère insécurité pas activé, 
-    //    histoire d'afficher la note commune ? A toi de voir
-    const insecuByCarre = await gatherInsecuDetails(intersectionSet);
+    // 5) Ecoles => partiel
+    let ecolesByIris = await applyEcolesPartial(irisAfterSoc, criteria?.ecoles);
 
-    // 8) Construire la liste "carreaux" + communes
-    //    On avait déjà la "communesFinal" => si tu veux faire un tri 
-    //    ou un regroupement final... 
-    //    (Tu peux garder l'ancien "I) Communes regroupement" si besoin.)
+    // 6) Collèges => partiel
+    let collegesByIris = await applyCollegesPartial(irisAfterSoc, criteria?.colleges);
 
-    // Mais si tu veux la même logique, on fait un "expanded" unnest(insee_com) + group by => 
-    //   comme ton ancien code. On skip si tu veux ?
+    // 7) Récupérer la note insécurité => gatherInsecuByIris
+    let insecuByIris = await gatherInsecuByIris(irisAfterSoc);
 
-    // 8b) On construit simplement un tableau complet
-    let carreauxDetail = [];
-    for (let id of intersectionSet) {
-      let dvfCount = dvfCountByCarre[id] || 0;
-      let filo = filoByCarre[id] || {};
-      let ecolesVal = ecolesByCarre[id];     // array ou 'hors-scope'
-      let colVal    = collegesByCarre[id];   // array ou 'hors-scope'
-      let insecuVal = insecuByCarre[id] || [];
+    // 8) Construire le tableau final
+    let irisFinalDetail = [];
+    for (let iris of irisAfterSoc) {
+      let dvf_count = dvfCountByIris[iris] || 0;
+      let rev = revenusByIris[iris] || {};
+      let soc = logSocByIris[iris] || {};
+      let ecolesVal = ecolesByIris[iris] || [];
+      let colsVal = collegesByIris[iris] || [];
+      let insecuVal = insecuByIris[iris] || [];
 
-      carreauxDetail.push({
-        id_carre_200m: id,
-        dvf_count: dvfCount,
-        nv_moyen: filo.nv_moyen || null,
-        part_log_soc: filo.part_log_soc || null,
-        insecurite: insecuVal,   // ex. [ {insee, nom_com, note}, ...]
+      irisFinalDetail.push({
+        code_iris: iris,
+        dvf_count,
+        mediane: rev.mediane || null,
+        part_log_soc: soc.part_log_soc || null,
+        insecurite: insecuVal, // ex. [ {insee, nom_com, note} ]
         ecoles: ecolesVal,
-        colleges: colVal
+        colleges: colsVal
       });
     }
 
-    // 8c) Communes regroument (ancienne partie "I)")
-    console.time('I) Communes regroupement');
+    // 9) GroupBy communes si besoin
+    let communesData = await groupByCommunes(irisAfterSoc, communesFinal);
 
-  // Si communesFinal.length = 0, c'est qu'il n'y avait plus de commune après insécurité
-  if (!communesFinal.length) {
-    // => On renvoie un tableau communes vide
-    console.log('Pas de communesFinal => communesData = []');
-    var communesData = [];
-    console.timeEnd('I) Communes regroupement');
-
-  } else {
-    // Sinon on fait la requête d'agrégation
-
-    const queryCommunes = `
-      WITH selected_ids AS (
-        SELECT unnest($1::text[]) AS id
-      ),
-      expanded AS (
-        SELECT unnest(g.insee_com) AS insee
-        FROM decoupages.grille200m_metropole g
-        JOIN selected_ids s ON g.idinspire = s.id
-      )
-      SELECT
-        e.insee AS insee_com,
-        c.nom AS nom_com,
-        c.insee_dep,
-        c.nom_dep,
-        COUNT(*) AS nb_carreaux
-      FROM expanded e
-      JOIN decoupages.communes c
-        ON ( c.insee_com = e.insee OR c.insee_arm = e.insee )
-      WHERE e.insee = ANY($2::text[])
-      GROUP BY e.insee, c.nom, c.insee_dep, c.nom_dep
-      ORDER BY nb_carreaux DESC
-    `;
-
-    // On envoie 2 paramètres:
-    //  - $1 = intersectionSet (carreaux finaux)
-    //  - $2 = communesFinal (les communes filtrées)
-    let communesRes = await pool.query(queryCommunes, [
-      intersectionSet,
-      communesFinal
-    ]);
-
-    console.timeEnd('I) Communes regroupement');
-    console.log('=> Nombre de communes distinctes =', communesRes.rowCount);
-
-    var communesData = communesRes.rows.map(row => ({
-      insee_com : row.insee_com,
-      nom_com   : row.nom_com,
-      insee_dep : row.insee_dep,
-      nom_dep   : row.nom_dep,
-      nb_carreaux: Number(row.nb_carreaux)
-    }));
-  }
-
-    // 9) Réponse
+    // 10) Réponse
+    console.log('=> final irisAfterSoc.length =', irisAfterSoc.length);
     const finalResp = {
-      nb_carreaux: intersectionSet.length,
-      carreaux: carreauxDetail,
-      communes: communesData      // agrégation par commune
+      nb_iris: irisAfterSoc.length,
+      iris: irisFinalDetail,
+      communes: communesData
     };
 
-    console.timeEnd('TOTAL /get_carreaux_filtre');
+    console.timeEnd('TOTAL /get_iris_filtre');
     return res.json(finalResp);
 
   } catch (err) {
-    console.error('Erreur dans /get_carreaux_filtre :', err);
-    console.timeEnd('TOTAL /get_carreaux_filtre');
+    console.error('Erreur dans /get_iris_filtre :', err);
+    console.timeEnd('TOTAL /get_iris_filtre');
     return res.status(500).json({ error: err.message });
   }
 });
@@ -845,5 +800,5 @@ app.post('/get_carreaux_filtre', async (req, res) => {
 // Lancement
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API démarrée sur le port ${PORT}`);
+  console.log(`API v2 IRIS démarrée sur le port ${PORT}`);
 });
