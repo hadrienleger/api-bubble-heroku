@@ -33,7 +33,7 @@ app.get('/ping', (req, res) => {
 
 // --------------------------------------------------------------
 // A) Fonctions utilitaires (intersection, union, différence)
-// --------------------------------------------------------------
+// ---------------------------------- ----------------------------
 function intersectArrays(arrA, arrB) {
   const setB = new Set(arrB);
   return arrA.filter(x => setB.has(x));
@@ -64,7 +64,7 @@ function isDVFActivated(dvf) {
 }
 function isRevenusActivated(rev) {
   if (!rev) return false;
-  if (rev.mediane && (rev.mediane.min!=null || rev.mediane.max!=null)) return true;
+  if (rev.mediane_rev_decl && (rev.mediane_rev_decl.min!=null || rev.mediane_rev_decl.max!=null)) return true;
   return false;
 }
 function isLogSocActivated(ls) {
@@ -305,22 +305,22 @@ async function applyRevenus(irisList, revCriteria) {
   v.push(irisList);
   i++;
 
-  if (revCriteria.mediane) {
-    if (revCriteria.mediane.min != null) {
-      w.push(`mediane >= $${i}`);
-      v.push(revCriteria.mediane.min);
+  if (revCriteria.mediane_rev_decl) {
+    if (revCriteria.mediane_rev_decl.min != null) {
+      w.push(`mediane_rev_decl >= $${i}`);
+      v.push(revCriteria.mediane_rev_decl.min);
       i++;
     }
-    if (revCriteria.mediane.max != null) {
-      w.push(`mediane <= $${i}`);
-      v.push(revCriteria.mediane.max);
+    if (revCriteria.mediane_rev_decl.max != null) {
+      w.push(`mediane_rev_decl <= $${i}`);
+      v.push(revCriteria.mediane_rev_decl.max);
       i++;
     }
   }
   console.timeEnd('E){"text":"filosofi.logements_sociaux_iris_hl_2021","objUrl":"/browser/table/obj/1/1/16388/25754250/26184087","nodeType":"table","cur":{"from":39,"to":39}}1) Revenus-declares: build query');
 
   const query = `
-    SELECT code_iris, mediane
+    SELECT code_iris, mediane_rev_decl
     FROM filosofi.rev_decl_hl_2021
     WHERE ${w.join(' AND ')}
   `;
@@ -334,7 +334,7 @@ async function applyRevenus(irisList, revCriteria) {
   let irisOK = [];
   for (let row of r.rows) {
     revenusByIris[row.code_iris] = {
-      mediane: Number(row.mediane)
+      mediane_rev_decl: Number(row.mediane_rev_decl)
     };
     irisOK.push(row.code_iris);
   }
@@ -768,7 +768,7 @@ app.post('/get_iris_filtre', async (req, res) => {
       irisFinalDetail.push({
         code_iris: iris,
         dvf_count,
-        mediane: rev.mediane || null,
+        mediane_rev_decl: rev.mediane_rev_decl || null,
         part_log_soc: soc.part_log_soc || null,
         insecurite: insecuVal, // ex. [ {insee, nom_com, note} ]
         ecoles: ecolesVal,
