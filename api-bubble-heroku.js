@@ -768,8 +768,8 @@ app.post('/get_iris_filtre', async (req, res) => {
       irisFinalDetail.push({
         code_iris: iris,
         dvf_count,
-        mediane_rev_decl: rev.mediane_rev_decl || null,
-        part_log_soc: soc.part_log_soc || null,
+        mediane_rev_decl: (rev.mediane_rev_decl !== undefined) ? rev.mediane_rev_decl : null,
+        part_log_soc: (soc.part_log_soc !== undefined) ? soc.part_log_soc : null,
         insecurite: insecuVal, // ex. [ {insee, nom_com, note} ]
         ecoles: ecolesVal,
         colleges: colsVal
