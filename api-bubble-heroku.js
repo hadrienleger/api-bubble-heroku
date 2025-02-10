@@ -184,7 +184,7 @@ async function getIrisLocalisationAndInsecurite(params, insecu) {
 }
 
 // --------------------------------------------------------------
-// E) Filtrage DVF => intersection stricte
+// D) Filtrage DVF => intersection stricte
 // --------------------------------------------------------------
 async function applyDVF(arrayIrisLoc, dvfCriteria) {
   console.time('D) DVF: activation?');
@@ -287,7 +287,7 @@ async function applyDVF(arrayIrisLoc, dvfCriteria) {
 }
 
 // --------------------------------------------------------------
-// F) Filtrage revenus déclarés => intersection stricte
+// E) Filtrage revenus déclarés => intersection stricte
 // --------------------------------------------------------------
 async function applyRevenus(irisList, revCriteria) {
   console.time('E) Revenus-declares: activation?');
@@ -348,7 +348,7 @@ console.timeEnd('E) Revenus-declares: build query');
 }
 
 // --------------------------------------------------------------
-// G) Filtrage Logements sociaux => intersection stricte
+// F) Filtrage Logements sociaux => intersection stricte
 // --------------------------------------------------------------
 async function applyLogSoc(irisList, lsCriteria) {
   console.time('F)1) LogSoc: activation?');
@@ -733,14 +733,14 @@ app.post('/get_iris_filtre', async (req, res) => {
     }
 
     // 3) Revenus => intersection
-    let { irisSet: irisAfterRevenus, revenusByIris } = await applyRevenus(irisAfterDVF, criteria?.revenus);
+    let { irisSet: irisAfterRevenus, revenusByIris } = await applyRevenus(irisAfterDVF, criteria?.filosofi);
     if (!irisAfterRevenus.length) {
       console.timeEnd('TOTAL /get_iris_filtre');
       return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
 
     // 4) Logements sociaux => intersection
-    let { irisSet: irisAfterSoc, logSocByIris } = await applyLogSoc(irisAfterRevenus, criteria?.logsoc);
+    let { irisSet: irisAfterSoc, logSocByIris } = await applyLogSoc(irisAfterRevenus, criteria?.filosofi);
     if (!irisAfterSoc.length) {
       console.timeEnd('TOTAL /get_iris_filtre');
       return res.json({ nb_iris: 0, iris: [], communes: [] });
