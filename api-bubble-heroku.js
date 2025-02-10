@@ -364,7 +364,7 @@ async function applyLogSoc(irisList, lsCriteria) {
   let i = 1;
 
   // Remplace "iris" si ta table a "code_iris" comme nom
-  w.push(`iris = ANY($${i})`);
+  w.push(`code_iris = ANY($${i})`);
   v.push(irisList);
   i++;
 
@@ -383,7 +383,7 @@ async function applyLogSoc(irisList, lsCriteria) {
   console.timeEnd('F)1) LogSoc: build query');
 
   const query = `
-    SELECT iris AS code_iris, part_log_soc
+    SELECT code_iris, part_log_soc
     FROM filosofi.logements_sociaux_iris_hl_2021
     WHERE ${w.join(' AND ')}
   `;
