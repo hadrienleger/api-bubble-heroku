@@ -290,14 +290,14 @@ async function applyDVF(arrayIrisLoc, dvfCriteria) {
 // F) Filtrage revenus déclarés => intersection stricte
 // --------------------------------------------------------------
 async function applyRevenus(irisList, revCriteria) {
-  console.time('E)1) Revenus-declares: activation?');
+  console.time('E) Revenus-declares: activation?');
   if (!isRevenusActivated(revCriteria)) {
-    console.timeEnd('E)1) Revenus-declares: activation?');
+    console.timeEnd('E) Revenus-declares: activation?');
     return { irisSet: irisList, revenusByIris: {} };
   }
-  console.timeEnd('E)1) Revenus-declares: activation?');
+  console.timeEnd('E) Revenus-declares: activation?');
 
-  console.time('E)1) Revenus-declares: build query');
+  console.time('E) Revenus-declares: build query');
   let w = [];
   let v = [];
   let i = 1;
@@ -317,16 +317,16 @@ async function applyRevenus(irisList, revCriteria) {
       i++;
     }
   }
-  console.timeEnd('E){"text":"filosofi.logements_sociaux_iris_hl_2021","objUrl":"/browser/table/obj/1/1/16388/25754250/26184087","nodeType":"table","cur":{"from":39,"to":39}}1) Revenus-declares: build query');
+console.timeEnd('E) Revenus-declares: build query');
 
   const query = `
     SELECT code_iris, mediane_rev_decl
     FROM filosofi.rev_decl_hl_2021
     WHERE ${w.join(' AND ')}
   `;
-  console.time('E)1) Revenus-declares: exec query');
+  console.time('E) Revenus-declares: exec query');
   let r = await pool.query(query, v);
-  console.timeEnd('E)1) Revenus-declares: exec query');
+  console.timeEnd('E) Revenus-declares: exec query');
 
   console.log(`=> Revenus-declares rowCount = ${r.rowCount}`);
 
@@ -339,9 +339,9 @@ async function applyRevenus(irisList, revCriteria) {
     irisOK.push(row.code_iris);
   }
 
-  console.time('E)1) Revenus-declares: intersection');
+  console.time('E) Revenus-declares: intersection');
   let irisSet = intersectArrays(irisList, irisOK);
-  console.timeEnd('E)1) Revenus-declares: intersection');
+  console.timeEnd('E) Revenus-declares: intersection');
   console.log(`=> after Revenus-declares intersectionSet.length = ${irisSet.length}`);
 
   return { irisSet, revenusByIris };
@@ -522,18 +522,18 @@ async function applyEcolesPartial(irisList, ecolesCrit) {
 // I) Critère partiel Collèges => intersection stricte si in-scope
 // --------------------------------------------------------------
 async function applyCollegesPartial(irisList, colCrit) {
-  console.time('F) Colleges: activation?');
+  console.time('H) Colleges: activation?');
   if (!isCollegesActivated(colCrit)) {
-    console.timeEnd('F) Colleges: activation?');
+    console.timeEnd('H) Colleges: activation?');
     let collegesByIris = {};
     for (let iris of irisList) {
       collegesByIris[iris] = "non-activé";
     }
     return collegesByIris;
   }
-  console.timeEnd('F) Colleges: activation?');
+  console.timeEnd('H) Colleges: activation?');
 
-  console.time('F) Colleges: subset coverage');
+  console.time('H) Colleges: subset coverage');
   // ex. DEPS_MANQUANTS
   const DEPS_MANQUANTS = ['17','22','2A','29','2B','52','56'];
 
@@ -545,8 +545,8 @@ async function applyCollegesPartial(irisList, colCrit) {
   `;
   let rCouv = await pool.query(qCouv, [irisList, DEPS_MANQUANTS]);
   let subsetCouvert = rCouv.rows.map(rr => rr.code_iris);
-  console.timeEnd('F) Colleges: subset coverage');
-  console.log('F) Colleges => subsetCouvert.length =', subsetCouvert.length);
+  console.timeEnd('H) Colleges: subset coverage');
+  console.log('H) Colleges => subsetCouvert.length =', subsetCouvert.length);
 
   // hors-scope
   let collegesByIris = {};
@@ -556,7 +556,7 @@ async function applyCollegesPartial(irisList, colCrit) {
   }
 
   // 2) pivot
-  console.time('F) Colleges: build query');
+  console.time('H) Colleges: build query');
   let w = [];
   let v = [];
   let i=1;
@@ -575,16 +575,16 @@ async function applyCollegesPartial(irisList, colCrit) {
     v.push(colCrit.valeur_figaro_max);
     i++;
   }
-  console.timeEnd('F) Colleges: build query');
+  console.timeEnd('H) Colleges: build query');
 
   const qPivot = `
     SELECT code_iris, code_rne, niveau_college_figaro
     FROM education_colleges.iris_rne_niveaucolleges
     WHERE ${w.join(' AND ')}
   `;
-  console.time('F) Colleges: exec query');
+  console.time('H) Colleges: exec query');
   let rCols = await pool.query(qPivot, v);
-  console.timeEnd('F) Colleges: exec query');
+  console.timeEnd('H) Colleges: exec query');
   console.log('=> CollegesPivot rowCount =', rCols.rowCount);
 
   let irisFoundSet = new Set();
