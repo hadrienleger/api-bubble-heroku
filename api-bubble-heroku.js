@@ -204,7 +204,7 @@ async function applyDVF(arrayIrisLoc, dvfCriteria) {
   idx++;
 
   if (dvfCriteria.propertyTypes && dvfCriteria.propertyTypes.length>0) {
-    whereClauses.push(`codtypbien = ANY($${idx})`);
+    whereClauses.push(`codtyploc = ANY($${idx})`);
     values.push(dvfCriteria.propertyTypes);
     idx++;
   }
