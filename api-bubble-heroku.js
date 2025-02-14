@@ -55,13 +55,31 @@ function differenceArrays(arrA, arrB) {
 // --------------------------------------------------------------
 function isDVFActivated(dvf) {
   if (!dvf) return false;
-  const hasType    = dvf.propertyTypes && dvf.propertyTypes.length>0;
-  const hasBudget  = dvf.budget && (dvf.budget.min!=null || dvf.budget.max!=null);
-  const hasSurface = dvf.surface && (dvf.surface.min!=null || dvf.surface.max!=null);
-  const hasRooms   = dvf.rooms &&   (dvf.rooms.min!=null   || dvf.rooms.max!=null);
-  const hasYears   = dvf.years &&   (dvf.years.min!=null   || dvf.years.max!=null);
+
+  // Filtrer pour enlever toute valeur null
+  // si dvf.propertyTypes est un array
+  if (Array.isArray(dvf.propertyTypes)) {
+    dvf.propertyTypes = dvf.propertyTypes.filter(pt => pt != null);
+  }
+
+  const hasType    = dvf.propertyTypes && dvf.propertyTypes.length > 0;
+
+  const hasBudget  = dvf.budget && (
+    (dvf.budget.min != null) || (dvf.budget.max != null)
+  );
+  const hasSurface = dvf.surface && (
+    (dvf.surface.min != null) || (dvf.surface.max != null)
+  );
+  const hasRooms   = dvf.rooms && (
+    (dvf.rooms.min != null)   || (dvf.rooms.max != null)
+  );
+  const hasYears   = dvf.years && (
+    (dvf.years.min != null)   || (dvf.years.max != null)
+  );
+
   return (hasType || hasBudget || hasSurface || hasRooms || hasYears);
 }
+
 function isRevenusActivated(rev) {
   if (!rev) return false;
   if (rev.mediane_rev_decl && (rev.mediane_rev_decl.min!=null || rev.mediane_rev_decl.max!=null)) return true;
