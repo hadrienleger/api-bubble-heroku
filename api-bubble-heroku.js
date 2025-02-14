@@ -112,36 +112,56 @@ async function getCommunesFromDepartements(depCodes) {
   return Array.from(new Set(allCommunes));
 }
 
+// Cette fonction peut être déclarée juste au-dessus de getIrisLocalisationAndInsecurite
+async function gatherCommuneCodes(selectedLocalities) {
+  let allCodes = [];
+
+  for (let loc of selectedLocalities) {
+    if (loc.type_collectivite === "Département") {
+      // => Convertir code_insee (ex. "75") en liste de communes
+      console.time(`getCommunesFromDep-${loc.code_insee}`);
+      let result = await getCommunesFromDepartements([loc.code_insee]);
+      console.timeEnd(`getCommunesFromDep-${loc.code_insee}`);
+      allCodes.push(...result);
+    } else {
+      // type_collectivite = "commune" ou "arrondissement"
+      allCodes.push(loc.code_insee);
+    }
+  }
+
+  // Retirer doublons
+  return Array.from(new Set(allCodes));
+}
+
+
 // --------------------------------------------------------------
 // D) getIrisLocalisationAndInsecurite
 //     1) Récup communes (type com/dep)
 //     2) Filtre sur insécurité => communesFinal
 //     3) Récup IRIS correspondants
 // --------------------------------------------------------------
+
 async function getIrisLocalisationAndInsecurite(params, insecu) {
   console.time('A) localiser communes');
-  let communesSelection = [];
 
-  if (params.code_type === 'com') {
-    communesSelection = params.codes;
-  } else if (params.code_type === 'dep') {
-    let allCom = [];
-    for (let dep of params.codes) {
-      let comDep = await getCommunesFromDepartements([dep]);
-      allCom.push(...comDep);
-    }
-    communesSelection = Array.from(new Set(allCom));
-  } else {
-    throw new Error('code_type doit être "com" ou "dep".');
+  // 1) On vérifie que params.selected_localities existe et est un tableau
+  if (!params.selected_localities || !Array.isArray(params.selected_localities)) {
+    throw new Error('Paramètre "selected_localities" manquant ou invalide (doit être un array).');
   }
+
+  // 2) Récupérer la liste unifiée de communes (arrondissements = communes, départements => on les éclate en communes)
+  let communesSelection = await gatherCommuneCodes(params.selected_localities);
   console.log('=> communesSelection.length =', communesSelection.length);
   console.timeEnd('A) localiser communes');
 
+  // 3) Si aucune commune n'est trouvée, on renvoie un objet vide
   if (!communesSelection.length) {
     return { arrayIrisLoc: [], communesFinal: [] };
   }
 
-  // B) insécurité => note >= insecu.min
+  // ----------------------------------------------------------------
+  // I) insécurité => note >= insecu.min
+  // ----------------------------------------------------------------
   let communesFinal = communesSelection;
   if (insecu && insecu.min != null) {
     console.time('B) insecurite query');
@@ -167,7 +187,9 @@ async function getIrisLocalisationAndInsecurite(params, insecu) {
     }
   }
 
-  // C) IRIS => table decoupages.iris_2022
+  // ----------------------------------------------------------------
+  // II) Récupérer les IRIS => decoupages.iris_2022
+  // ----------------------------------------------------------------
   console.time('C) iris_2022 query');
   const qIris = `
     SELECT code_iris
@@ -180,8 +202,10 @@ async function getIrisLocalisationAndInsecurite(params, insecu) {
   let arrayIrisLoc = rIris.rows.map(rr => rr.code_iris);
   console.log('=> arrayIrisLoc.length =', arrayIrisLoc.length);
 
+  // 4) Renvoie l'ensemble IRIS
   return { arrayIrisLoc, communesFinal };
 }
+
 
 // --------------------------------------------------------------
 // D) Filtrage DVF => intersection stricte
@@ -710,16 +734,14 @@ app.post('/get_iris_filtre', async (req, res) => {
 
   try {
     const { params, criteria } = req.body;
-    if (!params || !params.code_type || !params.codes) {
+    if (!params || !params.selected_localities) {
       console.timeEnd('TOTAL /get_iris_filtre');
-      return res.status(400).json({ error: 'Paramètres de localisation manquants.' });
+      return res.status(400).json({ error: 'Paramètres de localisation manquants (selected_localities).' });
     }
 
     // 1) Localisation + insécurité => IRIS
-    const { arrayIrisLoc, communesFinal } = await getIrisLocalisationAndInsecurite(
-      params,
-      criteria?.insecurite
-    );
+    const { arrayIrisLoc, communesFinal } = await getIrisLocalisationAndInsecurite(params, criteria?.insecurite);
+
     if (!arrayIrisLoc.length) {
       console.timeEnd('TOTAL /get_iris_filtre');
       return res.json({ nb_iris: 0, iris: [], communes: [] });
