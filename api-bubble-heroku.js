@@ -166,7 +166,7 @@ async function gatherCommuneCodes(selectedLocalities) {
       ) {
         // => c'est Paris, Lyon, ou Marseille global
         // => On éclate en arrondissements
-        let arrCodes = await getArrondissementsForVilleGlobal(loc.code_insee);
+        let arrCodes = await getArrondissementsForVilleGlobale(loc.code_insee);
         allCodes.push(...arrCodes);
       } else {
        // Commune normale, ou "arrondissement" explicite
