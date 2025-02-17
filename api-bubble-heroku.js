@@ -159,21 +159,21 @@ async function gatherCommuneCodes(selectedLocalities) {
       let result = await getCommunesFromDepartements([loc.code_insee]);
       console.timeEnd(`getCommunesFromDep-${loc.code_insee}`);
       allCodes.push(...result);
-
-} else {
-  // type_collectivite = "commune" ou "arrondissement"
-  if (loc.type_collectivite === "commune"
-    && ["75056","69123","13055"].includes(loc.code_insee)
-  ) {
-    // => c'est Paris, Lyon, ou Marseille global
-    // => On éclate en arrondissements
-    let arrCodes = await getArrondissementsForVilleGlobal(loc.code_insee);
-    allCodes.push(...arrCodes);
-  } else {
-   // Commune normale, ou "arrondissement" explicite
-     allCodes.push(loc.code_insee);
+    } else {
+      // type_collectivite = "commune" ou "arrondissement"
+      if (loc.type_collectivite === "commune"
+        && ["75056","69123","13055"].includes(loc.code_insee)
+      ) {
+        // => c'est Paris, Lyon, ou Marseille global
+        // => On éclate en arrondissements
+        let arrCodes = await getArrondissementsForVilleGlobal(loc.code_insee);
+        allCodes.push(...arrCodes);
+      } else {
+       // Commune normale, ou "arrondissement" explicite
+         allCodes.push(loc.code_insee);
+      }
+    }
   }
-}
 
   // Retirer doublons
   return Array.from(new Set(allCodes));
