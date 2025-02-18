@@ -720,7 +720,7 @@ async function gatherInsecuByIris(irisList) {
     insecuByIris[row.code_iris] = [{
       insee: row.insee_com,
       nom_com: row.nom_com || '(commune inconnue)',
-      note: row.note_sur_20 != null ? Number(row.note_sur_20) : null
+      note: row.note_sur_20 != null ? Number(row.note_sur_20) : null,
 
     // Ajout du nom de l’IRIS
     nom_iris: row.nom_iris || '(iris inconnu)'
