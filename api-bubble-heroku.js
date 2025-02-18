@@ -360,108 +360,115 @@ async function applyDVF(arrayIrisLoc, dvfCriteria) {
 // E) Filtrage revenus déclarés => intersection stricte
 // --------------------------------------------------------------
 async function applyRevenus(irisList, revCriteria) {
-  console.time('E) Revenus-declares: activation?');
-  if (!isRevenusActivated(revCriteria)) {
-    console.timeEnd('E) Revenus-declares: activation?');
-    return { irisSet: irisList, revenusByIris: {} };
+  console.time('E) Revenus: build query');
+  
+  // 1) Préparer la liste d’IRIS en entrée
+  //    => si c’est vide, on sort directement
+  if (!irisList.length) {
+    return { irisSet: [], revenusByIris: {} };
   }
-  console.timeEnd('E) Revenus-declares: activation?');
 
-  console.time('E) Revenus-declares: build query');
-  let w = [];
-  let v = [];
-  let i = 1;
-  w.push(`code_iris = ANY($${i})`);
-  v.push(irisList);
-  i++;
+  // 2) On construit la requête
+  let whereClauses = [];
+  let vals = [];
+  let idx = 1;
 
-  if (revCriteria.mediane_rev_decl) {
+  // (A) Filtrer sur code_iris dans irisList
+  whereClauses.push(`code_iris = ANY($${idx})`);
+  vals.push(irisList);
+  idx++;
+
+  // (B) si user a défini un min...
+  let doIntersection = false;  // indicateur si on fera intersection
+  if (revCriteria && revCriteria.mediane_rev_decl) {
     if (revCriteria.mediane_rev_decl.min != null) {
-      w.push(`mediane_rev_decl >= $${i}`);
-      v.push(revCriteria.mediane_rev_decl.min);
-      i++;
+      whereClauses.push(`mediane_rev_decl >= $${idx}`);
+      vals.push(revCriteria.mediane_rev_decl.min);
+      idx++;
+      doIntersection = true;
     }
     if (revCriteria.mediane_rev_decl.max != null) {
-      w.push(`mediane_rev_decl <= $${i}`);
-      v.push(revCriteria.mediane_rev_decl.max);
-      i++;
+      whereClauses.push(`mediane_rev_decl <= $${idx}`);
+      vals.push(revCriteria.mediane_rev_decl.max);
+      idx++;
+      doIntersection = true;
     }
   }
-console.timeEnd('E) Revenus-declares: build query');
 
-  const query = `
+  let query = `
     SELECT code_iris, mediane_rev_decl
     FROM filosofi.rev_decl_hl_2021
-    WHERE ${w.join(' AND ')}
+    WHERE ${whereClauses.join(' AND ')}
   `;
-  console.time('E) Revenus-declares: exec query');
-  let r = await pool.query(query, v);
-  console.timeEnd('E) Revenus-declares: exec query');
+  console.timeEnd('E) Revenus: build query');
 
-  console.log(`=> Revenus-declares rowCount = ${r.rowCount}`);
-
+  // 3) Exec
+  console.time('E) Revenus: exec');
+  let r = await pool.query(query, vals);
+  console.timeEnd('E) Revenus: exec');
+  
+  // 4) Stocker
   let revenusByIris = {};
   let irisOK = [];
   for (let row of r.rows) {
-    revenusByIris[row.code_iris] = {
-      mediane_rev_decl: Number(row.mediane_rev_decl)
-    };
-    irisOK.push(row.code_iris);
+    let ci = row.code_iris;
+    let mv = row.mediane_rev_decl != null ? Number(row.mediane_rev_decl) : null;
+    revenusByIris[ci] = { mediane_rev_decl: mv };
+
+    // tous ceux qui figurent dans le résultat 
+    // => si doIntersection=true, c’est qu’ils respectent min..max
+    // => sinon on en tient compte aussi
+    irisOK.push(ci);
   }
 
-  console.time('E) Revenus-declares: intersection');
-  let irisSet = intersectArrays(irisList, irisOK);
-  console.timeEnd('E) Revenus-declares: intersection');
-  console.log(`=> after Revenus-declares intersectionSet.length = ${irisSet.length}`);
+  // 5) Intersection
+  let irisSet;
+  if (doIntersection) {
+    irisSet = intersectArrays(irisList, irisOK);
+  } else {
+    // => pas de min..max => on ne restreint pas
+    irisSet = irisList;
+  }
 
   return { irisSet, revenusByIris };
 }
+
 
 // --------------------------------------------------------------
 // F) Filtrage Logements sociaux => intersection stricte
 // --------------------------------------------------------------
 async function applyLogSoc(irisList, lsCriteria) {
-  console.time('F)1) LogSoc: activation?');
-  if (!isLogSocActivated(lsCriteria)) {
-    console.timeEnd('F)1) LogSoc: activation?');
-    return { irisSet: irisList, logSocByIris: {} };
-  }
-  console.timeEnd('F)1) LogSoc: activation?');
+  // 1) 
+  if (!irisList.length) return { irisSet: [], logSocByIris: {} };
 
-  console.time('F)1) LogSoc: build query');
-  let w = [];
-  let v = [];
-  let i = 1;
+  // 2) Build la requête
+  let whereClauses = [ `code_iris = ANY($1)` ];
+  let vals = [ irisList ];
+  let idx = 2;
+  let doIntersection = false;
 
-  // Remplace "iris" si ta table a "code_iris" comme nom
-  w.push(`code_iris = ANY($${i})`);
-  v.push(irisList);
-  i++;
-
-  if (lsCriteria.part_log_soc) {
-    if (lsCriteria.part_log_soc.min!=null) {
-      w.push(`part_log_soc >= $${i}`);
-      v.push(lsCriteria.part_log_soc.min);
-      i++;
+  if (lsCriteria && lsCriteria.part_log_soc) {
+    if (lsCriteria.part_log_soc.min != null) {
+      whereClauses.push(`part_log_soc >= $${idx}`);
+      vals.push(lsCriteria.part_log_soc.min);
+      idx++;
+      doIntersection = true;
     }
-    if (lsCriteria.part_log_soc.max!=null) {
-      w.push(`part_log_soc <= $${i}`);
-      v.push(lsCriteria.part_log_soc.max);
-      i++;
+    if (lsCriteria.part_log_soc.max != null) {
+      whereClauses.push(`part_log_soc <= $${idx}`);
+      vals.push(lsCriteria.part_log_soc.max);
+      idx++;
+      doIntersection = true;
     }
   }
-  console.timeEnd('F)1) LogSoc: build query');
 
-  const query = `
+  let query = `
     SELECT code_iris, part_log_soc
     FROM filosofi.logements_sociaux_iris_hl_2021
-    WHERE ${w.join(' AND ')}
+    WHERE ${whereClauses.join(' AND ')}
   `;
-  console.time('F)1) LogSoc: exec query');
-  let r = await pool.query(query, v);
-  console.timeEnd('F)1) LogSoc: exec query');
 
-  console.log(`=> LogSoc rowCount = ${r.rowCount}`);
+  let r = await pool.query(query, vals);
 
   let logSocByIris = {};
   let irisOK = [];
@@ -470,13 +477,13 @@ async function applyLogSoc(irisList, lsCriteria) {
     irisOK.push(row.code_iris);
   }
 
-  console.time('F)1) LogSoc: intersection');
-  let irisSet = intersectArrays(irisList, irisOK);
-  console.timeEnd('F)1) LogSoc: intersection');
-  console.log(`=> after LogSoc intersectionSet.length = ${irisSet.length}`);
+  let irisSet = doIntersection
+    ? intersectArrays(irisList, irisOK)
+    : irisList;
 
   return { irisSet, logSocByIris };
 }
+
 
 // --------------------------------------------------------------
 // H) Critère partiel Ecoles => intersection stricte si "in-scope"
