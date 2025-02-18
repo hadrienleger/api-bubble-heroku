@@ -699,6 +699,7 @@ async function applyCollegesPartial(irisList, colCrit) {
 async function gatherInsecuByIris(irisList) {
   if (!irisList.length) {
   return { insecuByIris: {}, irisNameByIris: {} };
+}
 
   console.time('Insecu details: query');
   const q = `
