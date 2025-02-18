@@ -721,7 +721,11 @@ async function gatherInsecuByIris(irisList) {
       insee: row.insee_com,
       nom_com: row.nom_com || '(commune inconnue)',
       note: row.note_sur_20 != null ? Number(row.note_sur_20) : null
+      // => on NE MET PAS nom_iris ici
     }];
+
+    // (B) On stocke le nom_iris dans un objet distinct
+    irisNameByIris[row.code_iris] = row.nom_iris || '(iris inconnu)';
   }
   return insecuByIris;
 }
@@ -821,7 +825,7 @@ app.post('/get_iris_filtre', async (req, res) => {
     let collegesByIris = await applyCollegesPartial(irisAfterSoc, criteria?.colleges);
 
     // 7) Récupérer la note insécurité => gatherInsecuByIris
-    let insecuByIris = await gatherInsecuByIris(irisAfterSoc);
+    let { insecuByIris, irisNameByIris } = await gatherInsecuByIris(irisAfterSoc);
 
     // 8) Construire le tableau final
     let irisFinalDetail = [];
@@ -833,13 +837,12 @@ app.post('/get_iris_filtre', async (req, res) => {
       let colsVal = collegesByIris[iris] || [];
       let insecuVal = insecuByIris[iris] || [];
 
-      // insecuVal est un array de 0..1 objets => on prend le 1er
-      let firstInsecu = insecuVal[0] || {};
-      let nomIris = firstInsecu.nom_iris || null;
+      let nomIris = irisNameByIris[iris] || null;
+
 
       irisFinalDetail.push({
         code_iris: iris,
-        nom_iris: nomIris,
+        nom_iris: nomIris,  // => On l’a qu’UNE SEULE FOIS (résolution du problème où il apparaissait à deux endroits)
         dvf_count,
         mediane_rev_decl: (rev.mediane_rev_decl !== undefined) ? rev.mediane_rev_decl : null,
         part_log_soc: (soc.part_log_soc !== undefined) ? soc.part_log_soc : null,
