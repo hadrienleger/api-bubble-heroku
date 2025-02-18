@@ -697,7 +697,8 @@ async function applyCollegesPartial(irisList, colCrit) {
 // J) gatherInsecuByIris => note d'insécurité de la commune
 // --------------------------------------------------------------
 async function gatherInsecuByIris(irisList) {
-  if (!irisList.length) return {};
+  if (!irisList.length) {
+  return { insecuByIris: {}, irisNameByIris: {} };
 
   console.time('Insecu details: query');
   const q = `
@@ -728,7 +729,7 @@ async function gatherInsecuByIris(irisList) {
     // (B) On stocke le nom_iris dans un objet distinct
     irisNameByIris[row.code_iris] = row.nom_iris || '(iris inconnu)';
   }
-  return insecuByIris;
+  return { insecuByIris, irisNameByIris };
 }
 
 // --------------------------------------------------------------
