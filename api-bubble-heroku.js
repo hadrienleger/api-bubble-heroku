@@ -715,6 +715,7 @@ async function gatherInsecuByIris(irisList) {
   console.timeEnd('Insecu details: query');
 
   let insecuByIris = {};
+  let irisNameByIris = {};
   for (let row of r.rows) {
     // On stocke un array, comme en V1 (même si IRIS = 1 commune)
     insecuByIris[row.code_iris] = [{
