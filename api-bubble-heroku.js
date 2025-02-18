@@ -834,6 +834,8 @@ app.post('/get_iris_filtre', async (req, res) => {
       let soc = logSocByIris[iris] || {};
       let ecolesVal = ecolesByIris[iris] || [];
       let colsVal = collegesByIris[iris] || [];
+      let insecuVal = insecuByIris[iris] || [];
+
       // insecuVal est un array de 0..1 objets => on prend le 1er
       let firstInsecu = insecuVal[0] || {};
       let nomIris = firstInsecu.nom_iris || null;
