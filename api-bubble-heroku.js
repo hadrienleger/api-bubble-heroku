@@ -701,7 +701,7 @@ async function gatherInsecuByIris(irisList) {
 
   console.time('Insecu details: query');
   const q = `
-    SELECT i.code_iris, i.insee_com,
+    SELECT i.code_iris, i.nom_iris, i.insee_com,
            c.nom AS nom_com,
            d.note_sur_20
     FROM decoupages.iris_2022 i
@@ -721,6 +721,9 @@ async function gatherInsecuByIris(irisList) {
       insee: row.insee_com,
       nom_com: row.nom_com || '(commune inconnue)',
       note: row.note_sur_20 != null ? Number(row.note_sur_20) : null
+
+    // Ajout du nom de l’IRIS
+    nom_iris: row.nom_iris || '(iris inconnu)'
     }];
   }
   return insecuByIris;
@@ -831,10 +834,13 @@ app.post('/get_iris_filtre', async (req, res) => {
       let soc = logSocByIris[iris] || {};
       let ecolesVal = ecolesByIris[iris] || [];
       let colsVal = collegesByIris[iris] || [];
-      let insecuVal = insecuByIris[iris] || [];
+      // insecuVal est un array de 0..1 objets => on prend le 1er
+      let firstInsecu = insecuVal[0] || {};
+      let nomIris = firstInsecu.nom_iris || null;
 
       irisFinalDetail.push({
         code_iris: iris,
+        nom_iris: nomIris,
         dvf_count,
         mediane_rev_decl: (rev.mediane_rev_decl !== undefined) ? rev.mediane_rev_decl : null,
         part_log_soc: (soc.part_log_soc !== undefined) ? soc.part_log_soc : null,
