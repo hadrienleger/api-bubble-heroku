@@ -488,193 +488,226 @@ async function applyLogSoc(irisList, lsCriteria) {
 // --------------------------------------------------------------
 // H) Critère partiel Ecoles => intersection stricte si "in-scope"
 // --------------------------------------------------------------
-async function applyEcolesPartial(irisList, ecolesCrit) {
-  console.time('E) EcolesPartial: activation?');
-  if (!isEcolesActivated(ecolesCrit)) {
-    console.timeEnd('E) EcolesPartial: activation?');
-    // => non activé => on met "non-activé" pour tous
-    let ecolesByIris = {};
-    for (let iris of irisList) {
-      ecolesByIris[iris] = "non-activé";
-    }
-    return ecolesByIris;
-  }
-  console.timeEnd('E) EcolesPartial: activation?');
+/****************************************************
+ * applyEcoles(irisList, ecolesCrit)
+ * ---------------------------------
+ *  - On récupère TOUTES les écoles pour chaque IRIS couvert,
+ *    quel que soit le paramétrage. 
+ *  - Si l’utilisateur a défini ips_min / ips_max, on
+ *    applique un filtrage “intersection stricte” : on
+ *    ne garde dans le set final que les IRIS ayant AU MOINS
+ *    un établissement répondant à la plage IPS.
+ *  - Sinon, on ne filtre pas davantage, on conserve tous
+ *    les IRIS passés en entrée.
+ *  - “hors-scope” si l’IRIS n’est pas du tout présent
+ *    dans la table pivot (pas d’école).
+ ****************************************************/
+async function applyEcoles(irisList, ecolesCrit) {
+  console.time('applyEcoles');
 
-  // -------------------------------
-  // 1) Couverture => table "iris_rne_ipsecoles"
-  // -------------------------------
-  console.time('E) EcolesPartial: coverage');
-  const qDistinct = `
+  // 1) S’il n’y a pas d’IRIS en entrée, on renvoie direct.
+  if (!irisList.length) {
+    console.timeEnd('applyEcoles');
+    return {
+      irisSet: [],
+      ecolesByIris: {}
+    };
+  }
+
+  // 2) Récupération de la “couverture”
+  //    => IRIS couverts = IRIS pour lesquels on a
+  //       AU MOINS un enregistrement dans la table pivot.
+  console.time('Ecoles coverage');
+  const qCoverage = `
     SELECT DISTINCT code_iris
     FROM education_ecoles.iris_rne_ipsecoles
+    WHERE code_iris = ANY($1)
   `;
-  let rDistinct = await pool.query(qDistinct);
-  let setCouvert = new Set(rDistinct.rows.map(rr => rr.code_iris));
-  console.timeEnd('E) EcolesPartial: coverage');
+  let coverageRes = await pool.query(qCoverage, [irisList]);
+  console.timeEnd('Ecoles coverage');
 
-  // => On divise en deux : subsetCouvert, subsetHors
-  let subsetCouvert = irisList.filter(iris => setCouvert.has(iris));
-  let subsetHors     = irisList.filter(iris => !setCouvert.has(iris));
+  // -> coverageSet = ensemble d’IRIS couverts
+  let coverageSet = new Set(coverageRes.rows.map(r => r.code_iris));
 
-  // => "hors-scope" pour ceux hors
+  // subsetCouvert = IRIS couverts
+  let subsetCouvert = irisList.filter(ci => coverageSet.has(ci));
+  // subsetHors = IRIS non couverts => ecolesByIris= "hors-scope"
+  let subsetHors = irisList.filter(ci => !coverageSet.has(ci));
+
+  // On prépare un objet ecolesByIris
   let ecolesByIris = {};
-  for (let iris of subsetHors) {
-    ecolesByIris[iris] = "hors-scope";
+  for (let ci of subsetHors) {
+    ecolesByIris[ci] = "hors-scope";
   }
 
+  // 3) Si subsetCouvert est vide => plus rien à faire
   if (!subsetCouvert.length) {
-    // Si aucun IRIS n’est couvert => on a terminé
-    // => tout est "hors-scope"
-    return ecolesByIris;
+    console.timeEnd('applyEcoles');
+    // => on renvoie tout en “hors-scope” => le set final = irisList ?
+    //    Si on veut réellement “exclure” tout IRIS hors-scope,
+    //    on pourrait renvoyer [] à la place.
+    return {
+      irisSet: subsetHors, // ou [] si tu veux
+      ecolesByIris
+    };
   }
 
-  // -------------------------------
-  // 2) Requête filtrée par ips_min, ips_max
-  // -------------------------------
-  console.time('E) EcolesPartial: build query');
-  let whereClauses = [ `code_iris = ANY($1)` ];
-  let vals         = [ subsetCouvert ];
-  let idx          = 2;
+  // 4) Extraire TOUTES les écoles de subsetCouvert
+  //    => si ecolesCrit a ips_min..max => on filtrera plus bas
+  console.time('Ecoles pivot');
+  let wPivot = [`code_iris = ANY($1)`];
+  let vPivot = [subsetCouvert];
+  let idx = 2;
 
-  if (ecolesCrit.ips_min != null) {
-    whereClauses.push(`ips >= $${idx}`);
-    vals.push(ecolesCrit.ips_min);
+  let doIntersection = false;
+  if (ecolesCrit && ecolesCrit.ips_min != null) {
+    wPivot.push(`ips >= $${idx}`);
+    vPivot.push(ecolesCrit.ips_min);
     idx++;
+    doIntersection = true;
   }
-  if (ecolesCrit.ips_max != null) {
-    whereClauses.push(`ips <= $${idx}`);
-    vals.push(ecolesCrit.ips_max);
+  if (ecolesCrit && ecolesCrit.ips_max != null) {
+    wPivot.push(`ips <= $${idx}`);
+    vPivot.push(ecolesCrit.ips_max);
     idx++;
+    doIntersection = true;
   }
-  console.timeEnd('E) EcolesPartial: build query');
 
-  const sql = `
+  const sqlPivot = `
     SELECT code_iris, code_rne, ips
     FROM education_ecoles.iris_rne_ipsecoles
-    WHERE ${whereClauses.join(' AND ')}
+    WHERE ${wPivot.join(' AND ')}
   `;
-  console.time('E) EcolesPartial: exec query');
-  let rPivot = await pool.query(sql, vals);
-  console.timeEnd('E) EcolesPartial: exec query');
+  let pivotRes = await pool.query(sqlPivot, vPivot);
+  console.timeEnd('Ecoles pivot');
 
-  // Regrouper par IRIS
+  // Pour “intersection stricte”, on repère les IRIS
+  // qui ont au moins 1 établissement dans la fourchette.
+  // => irisFoundSet
   let irisFoundSet = new Set();
-  let mapEcoles = {};  // code_iris => array d’écoles
-  for (let row of rPivot.rows) {
+  // On stocke aussi la liste complète d’écoles
+  let mapEcoles = {}; // code_iris => array d'obj { code_rne, ips }
+
+  for (let row of pivotRes.rows) {
     let ci = row.code_iris;
     irisFoundSet.add(ci);
-    if (!mapEcoles[ci]) {
-      mapEcoles[ci] = [];
-    }
+    if (!mapEcoles[ci]) mapEcoles[ci] = [];
     mapEcoles[ci].push({
       code_rne: row.code_rne,
       ips: Number(row.ips)
     });
   }
 
-  // => IRIS couverts "pas" dans irisFoundSet => 0 écoles => intersection stricte => tu peux soit
-  //    - exclure totalement l’IRIS
-  //    - ou renvoyer un tableau vide. Cf. discussion 
-  // On suppose que “Critère partiel” => on ne retire PAS l’IRIS : on renvoie []
-  // Mais si tu veux *retirer* l’IRIS de la liste => modifie la boucle suivante.
-
-  for (let iris of subsetCouvert) {
-    if (!irisFoundSet.has(iris)) {
-      // => 0 écoles => on renvoie []
-      mapEcoles[iris] = [];
-    }
+  // 5) Si doIntersection = true => on retire du set final
+  //    tous les IRIS qui ne figurent pas dans irisFoundSet
+  let finalSet;
+  if (doIntersection) {
+    finalSet = subsetCouvert.filter(ci => irisFoundSet.has(ci));
+  } else {
+    // => on ne fait PAS de filtrage => on garde tout
+    finalSet = subsetCouvert;
   }
 
-  // -------------------------------
-  // 3) Remplir ecolesByIris
-  // -------------------------------
-  for (let iris of subsetCouvert) {
-    // soit un tableau d’écoles, soit [] si none
-    ecolesByIris[iris] = mapEcoles[iris] || [];
+  // 6) Pour chaque IRIS du finalSet => ecolesByIris = liste d’écoles
+  //    (ou [] s’il n’y a rien dans mapEcoles)
+  for (let ci of finalSet) {
+    ecolesByIris[ci] = mapEcoles[ci] || [];
   }
 
-  console.log(`=> EcolesPartial: coverage = ${subsetCouvert.length} IRIS, pivot = ${rPivot.rowCount} rows`);
-  return ecolesByIris;
+  // 7) On peut concaténer subsetHors => ceux qui sont “hors-scope”
+  //    + finalSet => IRIS “in-scope”
+  let irisFinal = finalSet.concat(subsetHors);
+
+  console.log(`applyEcoles => coverageRes=${coverageRes.rowCount} pivotRes=${pivotRes.rowCount}`);
+  console.timeEnd('applyEcoles');
+
+  return {
+    irisSet: irisFinal,
+    ecolesByIris
+  };
 }
-
 
 // --------------------------------------------------------------
 // I) Critère partiel Collèges => intersection stricte si in-scope
 // --------------------------------------------------------------
-async function applyCollegesPartial(irisList, colCrit) {
-  console.time('F) CollegesPartial: activation?');
-  if (!isCollegesActivated(colCrit)) {
-    console.timeEnd('F) CollegesPartial: activation?');
-    let collegesByIris = {};
-    for (let iris of irisList) {
-      collegesByIris[iris] = "non-activé";
-    }
-    return collegesByIris;
-  }
-  console.timeEnd('F) CollegesPartial: activation?');
+async function applyColleges(irisList, colCrit) {
+  console.time('applyColleges');
 
-  // 1) Couverture => retire les IRIS dont le departement figure dans DEPS_MANQUANTS
+  if (!irisList.length) {
+    console.timeEnd('applyColleges');
+    return {
+      irisSet: [],
+      collegesByIris: {}
+    };
+  }
+
+  // 1) Couverture départements manquants
   const DEPS_MANQUANTS = ['17','22','2A','29','2B','52','56'];
-  console.time('F) CollegesPartial: coverage');
-  const sqlCoverage = `
+  console.time('Colleges coverage');
+  const sqlCov = `
     SELECT code_iris, insee_dep
     FROM decoupages.iris_2022
     WHERE code_iris = ANY($1)
   `;
-  let rCouv = await pool.query(sqlCoverage, [irisList]);
-  console.timeEnd('F) CollegesPartial: coverage');
+  let covRes = await pool.query(sqlCov, [irisList]);
+  console.timeEnd('Colleges coverage');
 
-  let subsetCouvert = [];
-  let subsetHors    = [];
-  for (let row of rCouv.rows) {
-    if (DEPS_MANQUANTS.includes(row.insee_dep)) {
-      subsetHors.push(row.code_iris);
-    } else {
-      subsetCouvert.push(row.code_iris);
+  let coverageSet = new Set();
+  for (let row of covRes.rows) {
+    if (!DEPS_MANQUANTS.includes(row.insee_dep)) {
+      coverageSet.add(row.code_iris);
     }
   }
 
+  let subsetCouvert = irisList.filter(ci => coverageSet.has(ci));
+  let subsetHors = irisList.filter(ci => !coverageSet.has(ci));
+
   let collegesByIris = {};
-  for (let iris of subsetHors) {
-    collegesByIris[iris] = "hors-scope";
+  for (let ci of subsetHors) {
+    collegesByIris[ci] = "hors-scope";
   }
 
   if (!subsetCouvert.length) {
-    return collegesByIris; // => tout est hors-scope
+    console.timeEnd('applyColleges');
+    // => tout le monde hors-scope => pas de pivot
+    return {
+      irisSet: subsetHors,
+      collegesByIris
+    };
   }
 
-  // 2) Appliquer la requête pivot + intersection
-  console.time('F) CollegesPartial: build query');
-  let whereClauses = [ `code_iris = ANY($1)` ];
-  let vals         = [ subsetCouvert ];
-  let idx          = 2;
+  // 2) Requête pivot
+  console.time('Colleges pivot');
+  let wPivot = [`code_iris = ANY($1)`];
+  let vals = [subsetCouvert];
+  let idx = 2;
 
-  if (colCrit.valeur_figaro_min != null) {
-    whereClauses.push(`niveau_college_figaro >= $${idx}`);
+  let doIntersection = false;
+  if (colCrit && colCrit.valeur_figaro_min != null) {
+    wPivot.push(`niveau_college_figaro >= $${idx}`);
     vals.push(colCrit.valeur_figaro_min);
     idx++;
+    doIntersection = true;
   }
-  if (colCrit.valeur_figaro_max != null) {
-    whereClauses.push(`niveau_college_figaro <= $${idx}`);
+  if (colCrit && colCrit.valeur_figaro_max != null) {
+    wPivot.push(`niveau_college_figaro <= $${idx}`);
     vals.push(colCrit.valeur_figaro_max);
     idx++;
+    doIntersection = true;
   }
-  console.timeEnd('F) CollegesPartial: build query');
 
   const sqlPivot = `
     SELECT code_iris, code_rne, niveau_college_figaro
     FROM education_colleges.iris_rne_niveaucolleges
-    WHERE ${whereClauses.join(' AND ')}
+    WHERE ${wPivot.join(' AND ')}
   `;
-  console.time('F) CollegesPartial: exec query');
-  let rPivot = await pool.query(sqlPivot, vals);
-  console.timeEnd('F) CollegesPartial: exec query');
+  let pivotRes = await pool.query(sqlPivot, vals);
+  console.timeEnd('Colleges pivot');
 
-  // regroupement
+  // 3) Grouper par IRIS
   let irisFoundSet = new Set();
-  let mapCols = {};
-  for (let row of rPivot.rows) {
+  let mapCols = {}; // code_iris => array d'obj { code_rne, valeur_figaro }
+  for (let row of pivotRes.rows) {
     let ci = row.code_iris;
     irisFoundSet.add(ci);
     if (!mapCols[ci]) mapCols[ci] = [];
@@ -684,19 +717,29 @@ async function applyCollegesPartial(irisList, colCrit) {
     });
   }
 
-  // => IRIS non dans irisFoundSet => tableau vide
-  //   (on ne retire pas l’IRIS => critère partiel)
-  for (let iris of subsetCouvert) {
-    if (!irisFoundSet.has(iris)) {
-      mapCols[iris] = [];
-    }
+  // 4) Intersection stricte si doIntersection
+  let finalSet;
+  if (doIntersection) {
+    finalSet = subsetCouvert.filter(ci => irisFoundSet.has(ci));
+  } else {
+    finalSet = subsetCouvert;
   }
 
-  for (let iris of subsetCouvert) {
-    collegesByIris[iris] = mapCols[iris] || [];
+  // 5) Remplir collegesByIris
+  for (let ci of finalSet) {
+    collegesByIris[ci] = mapCols[ci] || [];
   }
 
-  return collegesByIris;
+  // => on concat hors-scope + finalSet
+  let irisFinal = finalSet.concat(subsetHors);
+
+  console.log(`applyColleges => coverageRes=${covRes.rowCount} pivotRes=${pivotRes.rowCount}`);
+  console.timeEnd('applyColleges');
+
+  return {
+    irisSet: irisFinal,
+    collegesByIris
+  };
 }
 
 
@@ -828,18 +871,26 @@ app.post('/get_iris_filtre', async (req, res) => {
       return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
 
-    // 5) Ecoles => partiel
-    let ecolesByIris = await applyEcolesPartial(irisAfterSoc, criteria?.ecoles);
+    // 5) Ecoles => renvoie { irisSet, ecolesByIris }
+    let { irisSet: irisAfterEco, ecolesByIris } = await applyEcoles(irisAfterSoc, criteria?.ecoles);
+    if (!irisAfterEco.length) {
+      // fin => pas d’IRIS
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
+    }
 
-    // 6) Collèges => partiel
-    let collegesByIris = await applyCollegesPartial(irisAfterSoc, criteria?.colleges);
+    // 6) Colleges => renvoie { irisSet, collegesByIris }
+    let { irisSet: irisAfterCols, collegesByIris } = await applyColleges(irisAfterEco, criteria?.colleges);
+    if (!irisAfterCols.length) {
+      // fin => pas d’IRIS
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
+    }
 
     // 7) Récupérer la note insécurité => gatherInsecuByIris
-    let { insecuByIris, irisNameByIris } = await gatherInsecuByIris(irisAfterSoc);
+    let { insecuByIris, irisNameByIris } = await gatherInsecuByIris(irisAfterCols);
 
     // 8) Construire le tableau final
     let irisFinalDetail = [];
-    for (let iris of irisAfterSoc) {
+    for (let iris of irisAfterCols) {
       let dvf_count = dvfCountByIris[iris] || 0;
       let rev = revenusByIris[iris] || {};
       let soc = logSocByIris[iris] || {};
