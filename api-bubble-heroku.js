@@ -256,6 +256,33 @@ async function getIrisLocalisationAndInsecurite(params, insecu) {
 // --------------------------------------------------------------
 // D) Filtrage DVF => intersection stricte
 // --------------------------------------------------------------
+
+// Fonction pour récupérer les ventes totales des IRIS filtrés, hors critères
+async function getDVFCountTotal(irisList) {
+  // 1) Si la liste est vide, on renvoie un objet vide
+  if (!irisList.length) {
+    return {};
+  }
+
+  // 2) Requête
+  console.time('getDVFCountTotal');
+  const sql = `
+    SELECT code_iris, COUNT(*)::int AS nb_total
+    FROM dvf_filtre.dvf_simplifie
+    WHERE code_iris = ANY($1)
+    GROUP BY code_iris
+  `;
+  let res = await pool.query(sql, [irisList]);
+  console.timeEnd('getDVFCountTotal');
+
+  let dvfTotalByIris = {};
+  for (let row of res.rows) {
+    dvfTotalByIris[row.code_iris] = Number(row.nb_total);
+  }
+  return dvfTotalByIris;
+}
+
+
 async function applyDVF(arrayIrisLoc, dvfCriteria) {
   console.time('D) DVF: activation?');
   if (!isDVFActivated(dvfCriteria)) {
@@ -574,7 +601,7 @@ async function applyEcoles(irisList, ecolesCrit) {
   }
 
   const sqlPivot = `
-    SELECT code_iris, code_rne, ips
+    SELECT code_iris, code_rne, ips, nom_ecole
     FROM education_ecoles.iris_rne_ipsecoles
     WHERE ${wPivot.join(' AND ')}
   `;
@@ -594,7 +621,8 @@ async function applyEcoles(irisList, ecolesCrit) {
     if (!mapEcoles[ci]) mapEcoles[ci] = [];
     mapEcoles[ci].push({
       code_rne: row.code_rne,
-      ips: Number(row.ips)
+      ips: Number(row.ips),
+      nom_ecole: row.nom_ecole
     });
   }
 
@@ -697,7 +725,9 @@ async function applyColleges(irisList, colCrit) {
   }
 
   const sqlPivot = `
-    SELECT code_iris, code_rne, niveau_college_figaro
+    SELECT code_iris, code_rne,
+           nom_college,               -- NOUVEAU
+           niveau_note20_methode_lineaire  -- NOUVEAU
     FROM education_colleges.iris_rne_niveaucolleges
     WHERE ${wPivot.join(' AND ')}
   `;
@@ -713,7 +743,8 @@ async function applyColleges(irisList, colCrit) {
     if (!mapCols[ci]) mapCols[ci] = [];
     mapCols[ci].push({
       code_rne: row.code_rne,
-      valeur_figaro: Number(row.niveau_college_figaro)
+      nom_college: row.nom_college,
+      note_sur_20: Number(row.niveau_note20_methode_lineaire)
     });
   }
 
@@ -753,14 +784,11 @@ async function gatherInsecuByIris(irisList) {
 
   console.time('Insecu details: query');
   const q = `
-    SELECT i.code_iris, i.nom_iris, i.insee_com,
-           c.nom AS nom_com,
-           d.note_sur_20
+    SELECT i.code_iris, i.nom_iris, d.note_sur_20
     FROM decoupages.iris_2022 i
-    LEFT JOIN decoupages.communes c
-      ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
     LEFT JOIN delinquance.notes_insecurite_geom_complet d
       ON d.insee_com = i.insee_com
+         OR d.insee_com = i.insee_arm  -- si besoin pour arrondissements
     WHERE i.code_iris = ANY($1)
   `;
   let r = await pool.query(q, [irisList]);
@@ -769,17 +797,15 @@ async function gatherInsecuByIris(irisList) {
   let insecuByIris = {};
   let irisNameByIris = {};
   for (let row of r.rows) {
-    // On stocke un array, comme en V1 (même si IRIS = 1 commune)
-    insecuByIris[row.code_iris] = [{
-      insee: row.insee_com,
-      nom_com: row.nom_com || '(commune inconnue)',
-      note: row.note_sur_20 != null ? Number(row.note_sur_20) : null
-      // => on NE MET PAS nom_iris ici
-    }];
+    // On ne renvoie plus que la note
+    const noteValue = (row.note_sur_20 != null) ? Number(row.note_sur_20) : null;
 
-    // (B) On stocke le nom_iris dans un objet distinct
+    insecuByIris[row.code_iris] = [
+      { note: noteValue }
+    ];
     irisNameByIris[row.code_iris] = row.nom_iris || '(iris inconnu)';
   }
+
   return { insecuByIris, irisNameByIris };
 }
 
@@ -881,9 +907,11 @@ app.post('/get_iris_filtre', async (req, res) => {
     // 6) Colleges => renvoie { irisSet, collegesByIris }
     let { irisSet: irisAfterCols, collegesByIris } = await applyColleges(irisAfterEco, criteria?.colleges);
     if (!irisAfterCols.length) {
-      // fin => pas d’IRIS
       return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
+
+    // 6 bis) Récupérer le nombre total DVF pour ces IRIS
+    let dvfTotalByIris = await getDVFCountTotal(irisAfterCols);
 
     // 7) Récupérer la note insécurité => gatherInsecuByIris
     let { insecuByIris, irisNameByIris } = await gatherInsecuByIris(irisAfterCols);
@@ -892,6 +920,7 @@ app.post('/get_iris_filtre', async (req, res) => {
     let irisFinalDetail = [];
     for (let iris of irisAfterCols) {
       let dvf_count = dvfCountByIris[iris] || 0;
+      let dvf_count_total = dvfTotalByIris[iris] || 0;      // ventes totales (NOUVEAU)
       let rev = revenusByIris[iris] || {};
       let soc = logSocByIris[iris] || {};
       let ecolesVal = ecolesByIris[iris] || [];
@@ -905,6 +934,7 @@ app.post('/get_iris_filtre', async (req, res) => {
         code_iris: iris,
         nom_iris: nomIris,  // => On l’a qu’UNE SEULE FOIS (résolution du problème où il apparaissait à deux endroits)
         dvf_count,
+        dvf_count_total,
         mediane_rev_decl: (rev.mediane_rev_decl !== undefined) ? rev.mediane_rev_decl : null,
         part_log_soc: (soc.part_log_soc !== undefined) ? soc.part_log_soc : null,
         insecurite: insecuVal, // ex. [ {insee, nom_com, note} ]
