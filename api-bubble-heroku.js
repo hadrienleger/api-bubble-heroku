@@ -784,11 +784,16 @@ async function gatherInsecuByIris(irisList) {
 
   console.time('Insecu details: query');
   const q = `
-    SELECT i.code_iris, i.nom_iris, d.note_sur_20
+    SELECT i.code_iris,
+           i.nom_iris,
+           d.note_sur_20
     FROM decoupages.iris_2022 i
+    LEFT JOIN decoupages.communes c
+      ON ( c.insee_com = i.insee_com
+        OR c.insee_arm = i.insee_com )
     LEFT JOIN delinquance.notes_insecurite_geom_complet d
-      ON d.insee_com = i.insee_com
-         OR d.insee_com = i.insee_arm  -- si besoin pour arrondissements
+      ON ( d.insee_com = c.insee_com
+        OR d.insee_com = c.insee_arm )
     WHERE i.code_iris = ANY($1)
   `;
   let r = await pool.query(q, [irisList]);
