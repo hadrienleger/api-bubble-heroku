@@ -712,13 +712,13 @@ async function applyColleges(irisList, colCrit) {
 
   let doIntersection = false;
   if (colCrit && colCrit.valeur_figaro_min != null) {
-    wPivot.push(`niveau_college_figaro >= $${idx}`);
+    wPivot.push(`niveau_note20_methode_lineaire >= $${idx}`);
     vals.push(colCrit.valeur_figaro_min);
     idx++;
     doIntersection = true;
   }
   if (colCrit && colCrit.valeur_figaro_max != null) {
-    wPivot.push(`niveau_college_figaro <= $${idx}`);
+    wPivot.push(`niveau_note20_methode_lineaire <= $${idx}`);
     vals.push(colCrit.valeur_figaro_max);
     idx++;
     doIntersection = true;
