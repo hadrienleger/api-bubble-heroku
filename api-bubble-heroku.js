@@ -942,7 +942,7 @@ app.post('/get_iris_filtre', async (req, res) => {
         dvf_count_total,
         mediane_rev_decl: (rev.mediane_rev_decl !== undefined) ? rev.mediane_rev_decl : null,
         part_log_soc: (soc.part_log_soc !== undefined) ? soc.part_log_soc : null,
-        insecurite: insecuVal, // ex. [ {insee, nom_com, note} ]
+        insecurite: (insecuVal && insecuVal.length > 0) ? insecuVal[0].note : null,
         ecoles: ecolesVal,
         colleges: colsVal
       });
