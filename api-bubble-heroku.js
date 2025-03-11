@@ -384,6 +384,79 @@ async function applyDVF(arrayIrisLoc, dvfCriteria) {
 }
 
 // --------------------------------------------------------------
+// D) Filtrage DVF bis => prix du mètre carré médian
+// --------------------------------------------------------------
+
+// Dans ton code, quelque part après la connexion PG et avant l'endpoint
+async function applyPrixMedian(irisList, pmCriteria) {
+  // 0) Si pas d’IRIS, on renvoie direct
+  if (!irisList.length) {
+    return { irisSet: [], prixMedianByIris: {} };
+  }
+
+  // 1) Checker si l’utilisateur a défini un min ou un max
+  //    S’il n’a rien défini, inutile d’aller chercher en BD => on ne filtre pas
+  if (!pmCriteria || (!pmCriteria.min && !pmCriteria.max)) {
+    // => On ne touche pas à la liste
+    return { irisSet: irisList, prixMedianByIris: {} };
+  }
+
+  // 2) Construire la requête SQL
+  // On s’appuie sur dvf_filtre.prix_m2_iris, en prenant la période 2024-S1
+  // Filtrage sur code_iris = ANY($1), ET si user a défini min ou max => clause WHERE
+  let whereClauses = [
+    `code_iris = ANY($1)`,
+    `periode_prix = '2024-S1'`
+  ];
+  let vals = [ irisList ];
+  let idx = 2;
+
+  let doIntersection = false;
+
+  // Filtre sur min
+  if (pmCriteria.min != null) {
+    whereClauses.push(`prix_median >= $${idx}`);
+    vals.push(pmCriteria.min);
+    idx++;
+    doIntersection = true;
+  }
+  // Filtre sur max
+  if (pmCriteria.max != null) {
+    whereClauses.push(`prix_median <= $${idx}`);
+    vals.push(pmCriteria.max);
+    idx++;
+    doIntersection = true;
+  }
+
+  let sql = `
+    SELECT code_iris, prix_median
+    FROM dvf_filtre.prix_m2_iris
+    WHERE ${whereClauses.join(' AND ')}
+  `;
+
+  // 3) Exécuter la requête
+  let result = await pool.query(sql, vals);
+
+  // 4) Construire un dictionnaire { codeIris => prix_median }
+  //    et repérer les IRIS qui répondent au critère
+  let prixMedianByIris = {};
+  let irisOK = [];
+  for (let row of result.rows) {
+    prixMedianByIris[row.code_iris] = Number(row.prix_median);
+    irisOK.push(row.code_iris);
+  }
+
+  // 5) Intersection stricte
+  // doIntersection = true si min ou max a été spécifié
+  let irisSet = doIntersection
+    ? irisList.filter(ci => irisOK.includes(ci))
+    : irisList;
+
+  return { irisSet, prixMedianByIris };
+}
+
+
+// --------------------------------------------------------------
 // E) Filtrage revenus déclarés => intersection stricte
 // --------------------------------------------------------------
 async function applyRevenus(irisList, revCriteria) {
@@ -915,36 +988,43 @@ app.post('/get_iris_filtre', async (req, res) => {
       return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
 
-    // 6 bis) Récupérer le nombre total DVF pour ces IRIS
+    // ----------------------------------------------------------------
+    // 7) Nouveau filtre sur le prix_median du m² (table prix_m2_iris)
+    // ----------------------------------------------------------------
+    let { irisSet: irisAfterPrixM2, prixMedianByIris } = await applyPrixMedian(irisAfterCols, criteria?.prixMedianM2);
+    if (!irisAfterPrixM2.length) {
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
+    }
+
+    // 8) Récupérer le nombre total DVF pour ces IRIS
     let dvfTotalByIris = await getDVFCountTotal(irisAfterCols);
 
-    // 7) Récupérer la note insécurité => gatherInsecuByIris
+    // 9) Récupérer la note insécurité => gatherInsecuByIris
     let { insecuByIris, irisNameByIris } = await gatherInsecuByIris(irisAfterCols);
 
-    // 8) Construire le tableau final
+    // 10) Construire le tableau final
     let irisFinalDetail = [];
-    for (let iris of irisAfterCols) {
+    for (let iris of irisAfterPrixM2) {
       let dvf_count = dvfCountByIris[iris] || 0;
-      let dvf_count_total = dvfTotalByIris[iris] || 0;      // ventes totales (NOUVEAU)
+      let dvf_count_total = dvfTotalByIris[iris] || 0;
       let rev = revenusByIris[iris] || {};
       let soc = logSocByIris[iris] || {};
       let ecolesVal = ecolesByIris[iris] || [];
       let colsVal = collegesByIris[iris] || [];
       let insecuVal = insecuByIris[iris] || [];
-
       let nomIris = irisNameByIris[iris] || null;
-
 
       irisFinalDetail.push({
         code_iris: iris,
-        nom_iris: nomIris,  // => On l’a qu’UNE SEULE FOIS (résolution du problème où il apparaissait à deux endroits)
+        nom_iris: nomIris,
         dvf_count,
         dvf_count_total,
-        mediane_rev_decl: (rev.mediane_rev_decl !== undefined) ? rev.mediane_rev_decl : null,
-        part_log_soc: (soc.part_log_soc !== undefined) ? soc.part_log_soc : null,
-        insecurite: (insecuVal && insecuVal.length > 0) ? insecuVal[0].note : null,
+        mediane_rev_decl: rev.mediane_rev_decl ?? null,
+        part_log_soc: soc.part_log_soc ?? null,
+        insecurite: (insecuVal.length > 0) ? insecuVal[0].note : null,
         ecoles: ecolesVal,
-        colleges: colsVal
+        colleges: colsVal,
+        prix_median_m2: prixMedianByIris[iris] ?? null  // <--- On l’ajoute
       });
     }
 
