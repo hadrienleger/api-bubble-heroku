@@ -997,10 +997,10 @@ app.post('/get_iris_filtre', async (req, res) => {
     }
 
     // 8) Récupérer le nombre total DVF pour ces IRIS
-    let dvfTotalByIris = await getDVFCountTotal(irisAfterCols);
+    let dvfTotalByIris = await getDVFCountTotal(irisAfterPrixM2);
 
     // 9) Récupérer la note insécurité => gatherInsecuByIris
-    let { insecuByIris, irisNameByIris } = await gatherInsecuByIris(irisAfterCols);
+    let { insecuByIris, irisNameByIris } = await gatherInsecuByIris(irisAfterPrixM2);
 
     // 10) Construire le tableau final
     let irisFinalDetail = [];
@@ -1028,16 +1028,16 @@ app.post('/get_iris_filtre', async (req, res) => {
       });
     }
 
-    // 9) GroupBy communes si besoin
-    let communesData = await groupByCommunes(irisAfterSoc, communesFinal);
+    // 11) GroupBy communes si besoin
+    let communesData = await groupByCommunes(irisAfterPrixM2, communesFinal);
 
-    // 10) Réponse
+    // 12) Réponse
     console.log('=> final irisAfterSoc.length =', irisAfterSoc.length);
     const finalResp = {
-      nb_iris: irisAfterSoc.length,
-      iris: irisFinalDetail,
-      communes: communesData
-    };
+       nb_iris: irisAfterPrixM2.length,
+       iris: irisFinalDetail,
+       communes: communesData
+     };
 
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json(finalResp);
