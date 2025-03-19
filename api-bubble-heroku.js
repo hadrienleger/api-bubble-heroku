@@ -282,6 +282,130 @@ async function getDVFCountTotal(irisList) {
   return dvfTotalByIris;
 }
 
+// --------------------------------------------------------------
+// NOUVEAU : getDVFCountFinal
+// --------------------------------------------------------------
+async function getDVFCountFinal(irisList, dvfCriteria) {
+  // Si la liste finale est vide, on renvoie direct
+  if (!irisList.length) {
+    return {};
+  }
+
+  // Si DVF n’est pas activé, on considère qu’il n’y a pas
+  // de restriction. Du coup, on compte juste TOUTES les ventes
+  // de ces IRIS, ou on peut renvoyer 0 si tu veux.
+  // Ici, on reproduit la logique "non activée => pas de filtrage"
+  if (!isDVFActivated(dvfCriteria)) {
+    // Pas de filtrage => on compte toutes les transactions de ces IRIS
+    // (Ou on peut décider de renvoyer 0)
+    const sql = `
+      SELECT code_iris, COUNT(*)::int AS nb_mut
+      FROM dvf_filtre.dvf_simplifie
+      WHERE code_iris = ANY($1)
+      GROUP BY code_iris
+    `;
+    let resAll = await pool.query(sql, [irisList]);
+    let allCount = {};
+    for (let row of resAll.rows) {
+      allCount[row.code_iris] = Number(row.nb_mut);
+    }
+    // Pour les IRIS pas présents dans la requête, nb=0
+    for (let ci of irisList) {
+      if (!allCount[ci]) allCount[ci] = 0;
+    }
+    return allCount;
+  }
+
+  // Sinon, on applique les mêmes clauses que applyDVF
+  // On reconstruit un "WHERE" similaire
+  let whereClauses = [];
+  let values = [];
+  let idx = 1;
+
+  whereClauses.push(`code_iris = ANY($${idx})`);
+  values.push(irisList);
+  idx++;
+
+  if (dvfCriteria.propertyTypes && dvfCriteria.propertyTypes.length > 0) {
+    whereClauses.push(`codtyploc = ANY($${idx})`);
+    values.push(dvfCriteria.propertyTypes);
+    idx++;
+  }
+  if (dvfCriteria.budget) {
+    if (dvfCriteria.budget.min != null) {
+      whereClauses.push(`valeurfonc >= $${idx}`);
+      values.push(dvfCriteria.budget.min);
+      idx++;
+    }
+    if (dvfCriteria.budget.max != null) {
+      whereClauses.push(`valeurfonc <= $${idx}`);
+      values.push(dvfCriteria.budget.max);
+      idx++;
+    }
+  }
+  if (dvfCriteria.surface) {
+    if (dvfCriteria.surface.min != null) {
+      whereClauses.push(`sbati >= $${idx}`);
+      values.push(dvfCriteria.surface.min);
+      idx++;
+    }
+    if (dvfCriteria.surface.max != null) {
+      whereClauses.push(`sbati <= $${idx}`);
+      values.push(dvfCriteria.surface.max);
+      idx++;
+    }
+  }
+  if (dvfCriteria.rooms) {
+    if (dvfCriteria.rooms.min != null) {
+      whereClauses.push(`nbpprinc >= $${idx}`);
+      values.push(dvfCriteria.rooms.min);
+      idx++;
+    }
+    if (dvfCriteria.rooms.max != null) {
+      whereClauses.push(`nbpprinc <= $${idx}`);
+      values.push(dvfCriteria.rooms.max);
+      idx++;
+    }
+  }
+  if (dvfCriteria.years) {
+    if (dvfCriteria.years.min != null) {
+      whereClauses.push(`anneemut >= $${idx}`);
+      values.push(dvfCriteria.years.min);
+      idx++;
+    }
+    if (dvfCriteria.years.max != null) {
+      whereClauses.push(`anneemut <= $${idx}`);
+      values.push(dvfCriteria.years.max);
+      idx++;
+    }
+  }
+
+  const wh = `WHERE ` + whereClauses.join(' AND ');
+
+  const query = `
+    SELECT code_iris, COUNT(*)::int AS nb_mut
+    FROM dvf_filtre.dvf_simplifie
+    ${wh}
+    GROUP BY code_iris
+  `;
+  let res = await pool.query(query, values);
+
+  // Construire un objet dvfCountByIris = { code_iris => nb_mut }
+  let dvfCountByIris = {};
+  for (let row of res.rows) {
+    dvfCountByIris[row.code_iris] = Number(row.nb_mut);
+  }
+
+  // Les IRIS qui n’apparaissent pas => 0
+  for (let ci of irisList) {
+    if (!dvfCountByIris[ci]) {
+      dvfCountByIris[ci] = 0;
+    }
+  }
+
+  return dvfCountByIris;
+}
+
 
 async function applyDVF(arrayIrisLoc, dvfCriteria) {
   console.time('D) DVF: activation?');
@@ -991,10 +1115,12 @@ app.post('/get_iris_filtre', async (req, res) => {
     // 9) Récupérer la note insécurité => gatherInsecuByIris
     let { insecuByIris, irisNameByIris } = await gatherInsecuByIris(irisAfterPrixM2);
 
-    // 10) Construire le tableau final
+    // 10) NOUVEAU : Récupérer le dvf_count APRES TOUS LES FILTRES
+    let dvfCountByIris = await getDVFCountFinal(irisAfterPrixM2, criteria?.dvf);
+
+    // 11) Construire le tableau final
     let irisFinalDetail = [];
     for (let iris of irisAfterPrixM2) {
-      let dvf_count = dvfCountByIris[iris] || 0;
       let dvf_count_total = dvfTotalByIris[iris] || 0;
       let rev = revenusByIris[iris] || {};
       let soc = logSocByIris[iris] || {};
@@ -1002,6 +1128,8 @@ app.post('/get_iris_filtre', async (req, res) => {
       let colsVal = collegesByIris[iris] || [];
       let insecuVal = insecuByIris[iris] || [];
       let nomIris = irisNameByIris[iris] || null;
+      let dvf_count = dvfCountByIris[iris] || 0; // Nouveau
+
 
       irisFinalDetail.push({
         code_iris: iris,
