@@ -394,51 +394,41 @@ async function applyPrixMedian(irisList, pmCriteria) {
     return { irisSet: [], prixMedianByIris: {} };
   }
 
-  // 1) Checker si l’utilisateur a défini un min ou un max
-  //    S’il n’a rien défini, inutile d’aller chercher en BD => on ne filtre pas
-  if (!pmCriteria || (!pmCriteria.min && !pmCriteria.max)) {
-    // => On ne touche pas à la liste
-    return { irisSet: irisList, prixMedianByIris: {} };
-  }
-
-  // 2) Construire la requête SQL
-  // On s’appuie sur dvf_filtre.prix_m2_iris, en prenant la période 2024-S1
-  // Filtrage sur code_iris = ANY($1), ET si user a défini min ou max => clause WHERE
+  // 1) Préparer la requête SQL
   let whereClauses = [
     `code_iris = ANY($1)`,
     `periode_prix = '2024-S1'`
   ];
-  let vals = [ irisList ];
+  let vals = [irisList];
   let idx = 2;
 
   let doIntersection = false;
 
-  // Filtre sur min
-  if (pmCriteria.min != null) {
+  // 2) Ajouter la clause min si nécessaire
+  if (pmCriteria?.min != null) {
     whereClauses.push(`prix_median >= $${idx}`);
     vals.push(pmCriteria.min);
     idx++;
     doIntersection = true;
   }
-  // Filtre sur max
-  if (pmCriteria.max != null) {
+
+  // 3) Ajouter la clause max si nécessaire
+  if (pmCriteria?.max != null) {
     whereClauses.push(`prix_median <= $${idx}`);
     vals.push(pmCriteria.max);
     idx++;
     doIntersection = true;
   }
 
+  // 4) Construire et exécuter la requête
   let sql = `
     SELECT code_iris, prix_median
     FROM dvf_filtre.prix_m2_iris
     WHERE ${whereClauses.join(' AND ')}
   `;
-
-  // 3) Exécuter la requête
   let result = await pool.query(sql, vals);
 
-  // 4) Construire un dictionnaire { codeIris => prix_median }
-  //    et repérer les IRIS qui répondent au critère
+  // 5) Construire le dictionnaire { codeIris => prix_median } 
   let prixMedianByIris = {};
   let irisOK = [];
   for (let row of result.rows) {
@@ -446,8 +436,7 @@ async function applyPrixMedian(irisList, pmCriteria) {
     irisOK.push(row.code_iris);
   }
 
-  // 5) Intersection stricte
-  // doIntersection = true si min ou max a été spécifié
+  // 6) Faire l'intersection SI l'utilisateur a précisé un min ou un max
   let irisSet = doIntersection
     ? irisList.filter(ci => irisOK.includes(ci))
     : irisList;
