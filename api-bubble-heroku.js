@@ -1068,7 +1068,7 @@ app.post('/get_iris_filtre', async (req, res) => {
     }
 
     // 2) DVF => intersection
-    let { irisSet: irisAfterDVF, dvfCountByIris } = await applyDVF(arrayIrisLoc, criteria?.dvf);
+    let { irisSet: irisAfterDVF } = await applyDVF(arrayIrisLoc, criteria?.dvf);
     if (!irisAfterDVF.length) {
       console.timeEnd('TOTAL /get_iris_filtre');
       return res.json({ nb_iris: 0, iris: [], communes: [] });
@@ -1149,7 +1149,7 @@ app.post('/get_iris_filtre', async (req, res) => {
     let communesData = await groupByCommunes(irisAfterPrixM2, communesFinal);
 
     // 12) Réponse
-    console.log('=> final irisAfterSoc.length =', irisAfterSoc.length);
+    console.log('=> final irisAfterPrixM2.length =', irisAfterPrixM2.length);
     const finalResp = {
        nb_iris: irisAfterPrixM2.length,
        iris: irisFinalDetail,
