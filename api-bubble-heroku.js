@@ -148,7 +148,7 @@ async function getArrondissementsForVilleGlobale(codeVille) {
   return r.rows.map(row => row.insee_arm);
 }
 
-// Cette fonction peut être déclarée juste au-dessus de getIrisLocalisationAndInsecurite
+// Cette fonction peut être déclarée juste au-dessus de getIrisLocalisationAndSecurite
 async function gatherCommuneCodes(selectedLocalities) {
   let allCodes = [];
 
@@ -181,13 +181,13 @@ async function gatherCommuneCodes(selectedLocalities) {
 
 
 // --------------------------------------------------------------
-// D) getIrisLocalisationAndInsecurite
+// D) getIrisLocalisationAndSecurite
 //     1) Récup communes (type com/dep)
-//     2) Filtre sur insécurité => communesFinal
+//     2) Filtre sur sécurité => communesFinal
 //     3) Récup IRIS correspondants
 // --------------------------------------------------------------
 
-async function getIrisLocalisationAndInsecurite(params, insecu) {
+async function getIrisLocalisationAndSecurite(params, securite) {
   console.time('A) localiser communes');
 
   // 1) On vérifie que params.selected_localities existe et est un tableau
@@ -206,30 +206,47 @@ async function getIrisLocalisationAndInsecurite(params, insecu) {
   }
 
   // ----------------------------------------------------------------
-  // I) insécurité => note >= insecu.min
+  // I) sécurité => note_sur_20 >= securite.min ET <= securite.max
   // ----------------------------------------------------------------
-  let communesFinal = communesSelection;
-  if (insecu && insecu.min != null) {
-    console.time('B) insecurite query');
-    const qInsecu = `
-      SELECT insee_com
-      FROM delinquance.notes_insecurite_geom_complet
-      WHERE note_sur_20 >= $1
-        AND insee_com = ANY($2)
-    `;
-    let resInsec = await pool.query(qInsecu, [insecu.min, communesFinal]);
-    console.timeEnd('B) insecurite query');
+  let communesFinal = communesSelection; // On part de toutes les communes sélectionnées
+  if (securite) {
+    // Construire le WHERE dynamique
+    let whereClauses = [`insee_com = ANY($1)`];
+    let vals = [communesFinal];
+    let idx = 2;
 
-    let communesInsecOk = resInsec.rows.map(r => r.insee_com);
-    console.log('=> communesInsecOk.length =', communesInsecOk.length);
+    if (securite.min != null) {
+      whereClauses.push(`note_sur_20 >= $${idx}`);
+      vals.push(securite.min);
+      idx++;
+    }
+    if (securite.max != null) {
+      whereClauses.push(`note_sur_20 <= $${idx}`);
+      vals.push(securite.max);
+      idx++;
+    }
 
-    console.time('B) intersection communes insecurite');
-    communesFinal = intersectArrays(communesFinal, communesInsecOk);
-    console.timeEnd('B) intersection communes insecurite');
-    console.log('=> communesFinal (after insecurite) =', communesFinal.length);
+    if (whereClauses.length > 1) {
+      console.time('B) securite query');
+      const qSecu = `
+        SELECT insee_com
+        FROM delinquance.notes_insecurite_geom_complet
+        WHERE ${whereClauses.join(' AND ')}
+      `;
+      let resSecu = await pool.query(qSecu, vals);
+      console.timeEnd('B) securite query');
 
-    if (!communesFinal.length) {
-      return { arrayIrisLoc: [], communesFinal: [] };
+      let communesSecuOk = resSecu.rows.map(r => r.insee_com);
+      console.log('=> communesSecuOk.length =', communesSecuOk.length);
+
+      console.time('B) intersection communes securite');
+      communesFinal = intersectArrays(communesFinal, communesSecuOk);
+      console.timeEnd('B) intersection communes securite');
+      console.log('=> communesFinal (after securite) =', communesFinal.length);
+
+      if (!communesFinal.length) {
+        return { arrayIrisLoc: [], communesFinal: [] };
+      }
     }
   }
 
@@ -248,7 +265,6 @@ async function getIrisLocalisationAndInsecurite(params, insecu) {
   let arrayIrisLoc = rIris.rows.map(rr => rr.code_iris);
   console.log('=> arrayIrisLoc.length =', arrayIrisLoc.length);
 
-  // 4) Renvoie l'ensemble IRIS
   return { arrayIrisLoc, communesFinal };
 }
 
@@ -394,51 +410,41 @@ async function applyPrixMedian(irisList, pmCriteria) {
     return { irisSet: [], prixMedianByIris: {} };
   }
 
-  // 1) Checker si l’utilisateur a défini un min ou un max
-  //    S’il n’a rien défini, inutile d’aller chercher en BD => on ne filtre pas
-  if (!pmCriteria || (!pmCriteria.min && !pmCriteria.max)) {
-    // => On ne touche pas à la liste
-    return { irisSet: irisList, prixMedianByIris: {} };
-  }
-
-  // 2) Construire la requête SQL
-  // On s’appuie sur dvf_filtre.prix_m2_iris, en prenant la période 2024-S1
-  // Filtrage sur code_iris = ANY($1), ET si user a défini min ou max => clause WHERE
+  // 1) Préparer la requête SQL
   let whereClauses = [
     `code_iris = ANY($1)`,
     `periode_prix = '2024-S1'`
   ];
-  let vals = [ irisList ];
+  let vals = [irisList];
   let idx = 2;
 
   let doIntersection = false;
 
-  // Filtre sur min
-  if (pmCriteria.min != null) {
+  // 2) Ajouter la clause min si nécessaire
+  if (pmCriteria?.min != null) {
     whereClauses.push(`prix_median >= $${idx}`);
     vals.push(pmCriteria.min);
     idx++;
     doIntersection = true;
   }
-  // Filtre sur max
-  if (pmCriteria.max != null) {
+
+  // 3) Ajouter la clause max si nécessaire
+  if (pmCriteria?.max != null) {
     whereClauses.push(`prix_median <= $${idx}`);
     vals.push(pmCriteria.max);
     idx++;
     doIntersection = true;
   }
 
+  // 4) Construire et exécuter la requête
   let sql = `
     SELECT code_iris, prix_median
     FROM dvf_filtre.prix_m2_iris
     WHERE ${whereClauses.join(' AND ')}
   `;
-
-  // 3) Exécuter la requête
   let result = await pool.query(sql, vals);
 
-  // 4) Construire un dictionnaire { codeIris => prix_median }
-  //    et repérer les IRIS qui répondent au critère
+  // 5) Construire le dictionnaire { codeIris => prix_median } 
   let prixMedianByIris = {};
   let irisOK = [];
   for (let row of result.rows) {
@@ -446,8 +452,7 @@ async function applyPrixMedian(irisList, pmCriteria) {
     irisOK.push(row.code_iris);
   }
 
-  // 5) Intersection stricte
-  // doIntersection = true si min ou max a été spécifié
+  // 6) Faire l'intersection SI l'utilisateur a précisé un min ou un max
   let irisSet = doIntersection
     ? irisList.filter(ci => irisOK.includes(ci))
     : irisList;
@@ -848,44 +853,39 @@ async function applyColleges(irisList, colCrit) {
 
 
 // --------------------------------------------------------------
-// J) gatherInsecuByIris => note d'insécurité de la commune
+// J) gatherSecuByIris => note de sécurité de la commune
 // --------------------------------------------------------------
-async function gatherInsecuByIris(irisList) {
+async function gatherSecuriteByIris(irisList) {
   if (!irisList.length) {
-  return { insecuByIris: {}, irisNameByIris: {} };
-}
+    return { securiteByIris: {}, irisNameByIris: {} };
+  }
 
-  console.time('Insecu details: query');
+  console.time('Securite details: query');
   const q = `
     SELECT i.code_iris,
            i.nom_iris,
            d.note_sur_20
     FROM decoupages.iris_2022 i
     LEFT JOIN decoupages.communes c
-      ON ( c.insee_com = i.insee_com
-        OR c.insee_arm = i.insee_com )
+           ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
     LEFT JOIN delinquance.notes_insecurite_geom_complet d
-      ON ( d.insee_com = c.insee_com
-        OR d.insee_com = c.insee_arm )
+           ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
     WHERE i.code_iris = ANY($1)
   `;
   let r = await pool.query(q, [irisList]);
-  console.timeEnd('Insecu details: query');
+  console.timeEnd('Securite details: query');
 
-  let insecuByIris = {};
+  let securiteByIris = {};
   let irisNameByIris = {};
   for (let row of r.rows) {
-    // On ne renvoie plus que la note
-    const noteValue = (row.note_sur_20 != null) ? Number(row.note_sur_20) : null;
-
-    insecuByIris[row.code_iris] = [
-      { note: noteValue }
-    ];
+    let noteValue = (row.note_sur_20 != null) ? Number(row.note_sur_20) : null;
+    securiteByIris[row.code_iris] = [{ note: noteValue }];
     irisNameByIris[row.code_iris] = row.nom_iris || '(iris inconnu)';
   }
 
-  return { insecuByIris, irisNameByIris };
+  return { securiteByIris, irisNameByIris };
 }
+
 
 // --------------------------------------------------------------
 // K) groupByCommunes => agrégation par commune (optionnel)
@@ -947,7 +947,7 @@ app.post('/get_iris_filtre', async (req, res) => {
     }
 
     // 1) Localisation + insécurité => IRIS
-    const { arrayIrisLoc, communesFinal } = await getIrisLocalisationAndInsecurite(params, criteria?.insecurite);
+    const { arrayIrisLoc, communesFinal } = await getIrisLocalisationAndSecurite(params, criteria?.securite);
 
     if (!arrayIrisLoc.length) {
       console.timeEnd('TOTAL /get_iris_filtre');
@@ -1000,7 +1000,7 @@ app.post('/get_iris_filtre', async (req, res) => {
     let dvfTotalByIris = await getDVFCountTotal(irisAfterPrixM2);
 
     // 9) Récupérer la note insécurité => gatherInsecuByIris
-    let { insecuByIris, irisNameByIris } = await gatherInsecuByIris(irisAfterPrixM2);
+    let { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(irisAfterPrixM2);
 
     // 10) Construire le tableau final
     let irisFinalDetail = [];
@@ -1011,7 +1011,7 @@ app.post('/get_iris_filtre', async (req, res) => {
       let soc = logSocByIris[iris] || {};
       let ecolesVal = ecolesByIris[iris] || [];
       let colsVal = collegesByIris[iris] || [];
-      let insecuVal = insecuByIris[iris] || [];
+      let securiteVal = securiteByIris[iris] || [];
       let nomIris = irisNameByIris[iris] || null;
 
       irisFinalDetail.push({
@@ -1021,7 +1021,7 @@ app.post('/get_iris_filtre', async (req, res) => {
         dvf_count_total,
         mediane_rev_decl: rev.mediane_rev_decl ?? null,
         part_log_soc: soc.part_log_soc ?? null,
-        insecurite: (insecuVal.length > 0) ? insecuVal[0].note : null,
+        securite: (securiteVal.length > 0) ? securiteVal[0].note : null,
         ecoles: ecolesVal,
         colleges: colsVal,
         prix_median_m2: prixMedianByIris[iris] ?? null  // <--- On l’ajoute
