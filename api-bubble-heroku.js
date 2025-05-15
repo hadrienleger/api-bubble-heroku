@@ -31,19 +31,36 @@ app.set('trust proxy', 1);    // Express utilise X-Forwarded-For (Heroku)
 // ----------------------------------
 /* ❶ Autorise UNE seule origine en production, 
       mais reste permissif quand tu testes en local. */
-const allowedOriginProd = 'https://app.zenmap.co';
+const cors = require('cors');
 
-if (process.env.NODE_ENV === 'production') {
-  app.use(
-    cors({
-      origin: allowedOriginProd,
-      methods: ['GET', 'POST', 'OPTIONS'],
-    })
-  );
-} else {
-  // dev/local : pas de prise de tête
-  app.use(cors());
-}
+const allowedOriginProd = 'https://app.zenmap.co';
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Autoriser les requêtes sans origin (comme curl ou Postman) en local uniquement
+    if (!origin && process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    // En production, n'autoriser que app.zenmap.co
+    if (origin === allowedOriginProd) {
+      callback(null, true);
+    } else {
+      console.log(`Requête CORS bloquée - Origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
+
+// Gestion des erreurs CORS
+app.use((err, req, res, next) => {
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ error: 'Origine non autorisée' });
+  }
+  next(err);
+});
 
 
 // Anti-scraping
