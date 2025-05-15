@@ -27,8 +27,22 @@ app.use(cors());
 app.use(express.json());
 
 // Petit test
-app.get('/ping', (req, res) => {
-  res.json({ message: 'pong', date: new Date() });
+app.get('/ping', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT 1 AS ok');
+    res.status(200).json({
+      message: 'pong',
+      db_status: 'ok',
+      date: new Date()
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: 'pong',
+      db_status: 'error',
+      error: err.message,
+      date: new Date()
+    });
+  }
 });
 
 // --------------------------------------------------------------
