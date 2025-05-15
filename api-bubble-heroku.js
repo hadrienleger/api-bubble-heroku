@@ -24,20 +24,55 @@ const pool = new Pool({
 });
 
 const app = express();
-app.use(cors());
+app.set('trust proxy', 1);    // Express utilise X-Forwarded-For (Heroku)
+
+
+/* ❶ Autorise UNE seule origine en production, 
+      mais reste permissif quand tu testes en local. */
+const allowedOriginProd = 'https://app.zenmap.co';
+
+if (process.env.NODE_ENV === 'production') {
+  app.use(
+    cors({
+      origin: allowedOriginProd,
+      methods: ['GET', 'POST', 'OPTIONS'],
+    })
+  );
+} else {
+  // dev/local : pas de prise de tête
+  app.use(cors());
+}
+
 
 // Anti-scraping
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,  // 15 minutes
   max: 100,                  // max 100 requêtes par IP
-  standardHeaders: true,    // pour pouvoir être lu dans les logs
-  legacyHeaders: false
+  standardHeaders: true,     // pour pouvoir être lu dans les logs
+  legacyHeaders: false,
+  handler: (req, res, next) => {
+    console.log(`Rate limit atteint pour IP: ${req.ip}`);
+    res.status(429).json({ error: 'Too Many Requests' });
+  }
 });
 
 app.use('/get_iris_filtre', limiter);
 
-
 app.use(express.json());
+
+// Ajouter un log pour chaque requête à /get_iris_filtre
+app.post('/get_iris_filtre', async (req, res) => {
+  console.log(`Requête reçue - IP: ${req.ip}, X-Forwarded-For: ${req.get('X-Forwarded-For')}`);
+  console.log('>>> BODY RECEIVED:', JSON.stringify(req.body, null, 2));
+  console.log('=== START /get_iris_filtre ===');
+  console.time('TOTAL /get_iris_filtre');
+
+  try {
+    const { params, criteria } = req.body;
+    if (!params || !params.selected_localities) {
+      console.timeEnd('TOTAL /get_iris_filtre');
+      return res.status(400).json({ error: 'Paramètres de localisation manquants (selected_localities).' });
+    }
 
 // Petit test
 app.get('/ping', async (req, res) => {
