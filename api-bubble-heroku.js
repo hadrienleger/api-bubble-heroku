@@ -4,6 +4,7 @@
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const rateLimit = require('express-rate-limit');
 
 // ----------------------------------
 // Charger .env si on n'est pas en production
@@ -24,6 +25,18 @@ const pool = new Pool({
 
 const app = express();
 app.use(cors());
+
+// Anti-scraping
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 100,                  // max 100 requêtes par IP
+  standardHeaders: true,    // pour pouvoir être lu dans les logs
+  legacyHeaders: false
+});
+
+app.use('/get_iris_filtre', limiter);
+
+
 app.use(express.json());
 
 // Petit test
