@@ -31,8 +31,6 @@ app.set('trust proxy', 1);    // Express utilise X-Forwarded-For (Heroku)
 // ----------------------------------
 /* ❶ Autorise UNE seule origine en production, 
       mais reste permissif quand tu testes en local. */
-const cors = require('cors');
-
 const allowedOriginProd = 'https://app.zenmap.co';
 const corsOptions = {
   origin: (origin, callback) => {
