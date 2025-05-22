@@ -1004,7 +1004,7 @@ app.get('/iris_by_point', async (req, res) => {
   try {
     const sql = `
       SELECT code_iris
-      FROM decoupages.iris_grandeetendue_2022
+      FROM decoupages.iris_2022
       WHERE ST_Contains(
               geom_2154,
               ST_Transform(
