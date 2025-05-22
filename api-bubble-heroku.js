@@ -868,14 +868,40 @@ async function buildIrisDetail(irisCodes) {
   const { securiteByIris,
           irisNameByIris }           = await gatherSecuriteByIris(afterDVF);
 
+  //  Passage qui va nous servir à envoyer la commune au endpoint iris_by_point
+  const sqlCom = `
+    SELECT i.code_iris,
+           -- Paris, Lyon, Marseille : on prend insee_arm si non vide
+           COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_com,
+           c.nom AS nom_com
+    FROM decoupages.iris_2022 i
+    JOIN decoupages.communes c
+         ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+    WHERE i.code_iris = ANY($1)
+  `;
+  const comRes = await pool.query(sqlCom, [afterDVF]);
+
+  // ⇒ { "751176510": { insee_com:"75117", nom_com:"Paris 17e Arrondissement" } }
+  const communeByIris = {};
+  for (const row of comRes.rows) {
+    communeByIris[row.code_iris] = {
+      insee_com : row.insee_com,
+      nom_com   : row.nom_com
+    };
+  }
+
+
   /* 3️⃣  On assemble l’objet final en bouclant sur afterDVF,
         pas sur irisCodes. */
   const irisFinalDetail = [];
 
   for (const iris of afterDVF) {
+    const commune = communeByIris[iris] ?? {};
     irisFinalDetail.push({
       code_iris        : iris,
       nom_iris         : irisNameByIris[iris]       ?? null,
+      insee_com        : commune.insee_com         ?? null,   // 🆕
+      nom_commune      : commune.nom_com           ?? null,   // 🆕
       dvf_count        : dvfCountByIris[iris]       ?? 0,
       dvf_count_total  : dvfTotalByIris[iris]       ?? 0,
       mediane_rev_decl : revenusByIris[iris]?.mediane_rev_decl ?? null,
