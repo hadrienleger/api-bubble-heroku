@@ -706,13 +706,13 @@ async function applyColleges(irisList, colCrit) {
 
   let doIntersection = false;
   if (colCrit && colCrit.valeur_figaro_min != null) {
-    wPivot.push(`niveau_note20_methode_lineaire >= $${idx}`);
+    wPivot.push(`note_figaro_sur_20 >= $${idx}`);
     vals.push(colCrit.valeur_figaro_min);
     idx++;
     doIntersection = true;
   }
   if (colCrit && colCrit.valeur_figaro_max != null) {
-    wPivot.push(`niveau_note20_methode_lineaire <= $${idx}`);
+    wPivot.push(`note_figaro_sur_20 <= $${idx}`);
     vals.push(colCrit.valeur_figaro_max);
     idx++;
     doIntersection = true;
@@ -737,7 +737,7 @@ async function applyColleges(irisList, colCrit) {
     mapCols[ci].push({
       code_rne: row.code_rne,
       nom_college: row.nom_college,
-      note_sur_20: Number(row.niveau_note20_methode_lineaire)
+      note_sur_20: Number(row.note_figaro_sur_20)
     });
   }
 
