@@ -721,8 +721,8 @@ async function applyColleges(irisList, colCrit) {
   const sqlPivot = `
     SELECT code_iris, code_rne,
            nom_college,
-           niveau_note20_methode_lineaire
-    FROM education_colleges.iris_rne_niveaucolleges
+           note_figaro_sur_20
+    FROM education_colleges.iris_rne_niveaux_2024
     WHERE ${wPivot.join(' AND ')}
   `;
   let pivotRes = await pool.query(sqlPivot, vals);
