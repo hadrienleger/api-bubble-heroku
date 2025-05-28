@@ -1067,6 +1067,35 @@ app.get('/ping', async (_req, res) => {
 });
 
 // ------------------------------------------------------------------
+// CENTROID (NOUVEAU ENDPOINT)
+// ------------------------------------------------------------------
+app.get('/centroid/:code', async (req, res) => {
+  const code = req.params.code;
+
+  const sql = `
+    SELECT
+      ST_X( ST_PointOnSurface(geom4326) ) AS lon,
+      ST_Y( ST_PointOnSurface(geom4326) ) AS lat
+    FROM   ${code.length === 5
+              ? 'decoupages.communes'
+              : 'decoupages.departements'}
+    WHERE  ${code.length === 5 ? 'insee_com' : 'insee_dep'} = $1
+    LIMIT  1
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, [code]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
+
+    res.set('Cache-Control', 'public, max-age=3600'); // 1h cache
+    res.json(rows[0]);                                // { lon: ..., lat: ... }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// ------------------------------------------------------------------
 // LANCEMENT
 // ------------------------------------------------------------------
 const PORT = process.env.PORT || 3000;
