@@ -1072,28 +1072,48 @@ app.get('/ping', async (_req, res) => {
 app.get('/centroid/:code', async (req, res) => {
   const code = req.params.code;
 
-  const sql = `
-    SELECT
-      ST_X( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lon,
-      ST_Y( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lat
-    FROM   ${code.length === 5
-              ? 'decoupages.communes'
-              : 'decoupages.departements'}
-    WHERE  ${code.length === 5 ? 'insee_com' : 'insee_dep'} = $1
-    LIMIT  1
-  `;
+  // Déterminer le SELECT selon le type de code INSEE
+  let sql, params;
+  if (/^\d{5}$/.test(code)) {
+    // Code INSEE de commune ou arrondissement
+    sql = `
+      SELECT
+        ST_X( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lon,
+        ST_Y( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lat
+      FROM decoupages.communes
+      WHERE insee_com = $1 OR insee_arm = $1
+      LIMIT 1
+    `;
+    params = [code];
+  } else if (/^\d{2,3}$/.test(code)) {
+    // Code INSEE de département (2 ou 3 chiffres)
+    sql = `
+      SELECT
+        ST_X( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lon,
+        ST_Y( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lat
+      FROM decoupages.departements
+      WHERE insee_dep = $1
+      LIMIT 1
+    `;
+    params = [code];
+  } else {
+    return res.status(400).json({ error: 'Code INSEE non reconnu' });
+  }
 
   try {
-    const { rows } = await pool.query(sql, [code]);
+    const { rows } = await pool.query(sql, params);
     if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
 
     res.set('Cache-Control', 'public, max-age=3600');
-    res.json(rows[0]);  // { lon: ..., lat: ... } prêt pour Mapbox
+    res.json(rows[0]); // { lon, lat }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'server_error' });
   }
 });
+
+
+
 
 // ------------------------------------------------------------------
 // LANCEMENT
