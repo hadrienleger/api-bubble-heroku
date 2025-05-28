@@ -1085,22 +1085,19 @@ app.post('/centroids', async (req, res) => {
     return res.status(400).json({ error: 'Liste attendue (array JSON)' });
   }
 
-  // --- Séparation des codes par type ---------------------------------------
-  const arrondissements   = input.filter(x => x.type_collectivite === 'arrondissement')
-                                 .map(x => x.code_insee);
+  const arrondissements  = input.filter(x => x.type_collectivite === 'arrondissement')
+                                .map(x => x.code_insee);
 
-  const communesGlobales  = input.filter(x => x.type_collectivite === 'commune')
-                                 .map(x => x.code_insee);
+  const communesGlobales = input.filter(x => x.type_collectivite === 'commune')
+                                .map(x => x.code_insee);
 
-  const departements      = input.filter(x => x.type_collectivite === 'Département')
-                                 .map(x => x.code_insee);
+  const departements     = input.filter(x => x.type_collectivite === 'Département')
+                                .map(x => x.code_insee);
 
   try {
     const results = [];
 
-    // ----------------------------------------------------------
-    // 1. Arrondissements (ex. 75106, 13207…)
-    // ----------------------------------------------------------
+    /* ---------- 1. Arrondissements ---------- */
     if (arrondissements.length) {
       const sqlArr = `
         SELECT
@@ -1119,21 +1116,13 @@ app.post('/centroids', async (req, res) => {
       })));
     }
 
-    // ----------------------------------------------------------
-    // 2. Communes « globales » (ex. 75056, 13055, 44109…)
-    //    • S’il existe une ligne maître (insee_arm = insee_com) → on la prend.
-    //    • Sinon (Paris, Lyon, Marseille) on agrège tous les arrondissements.
-    // ----------------------------------------------------------
+    /* ---------- 2. Communes globales ---------- */
     if (communesGlobales.length) {
       const sqlCom = `
         WITH unions AS (
           SELECT
             insee_com,
-            -- Si la commune a des arrondissements, on les regroupe
-            CASE
-              WHEN COUNT(*) > 1 THEN ST_Union(geom_2154)
-              ELSE MAX(geom_2154)   -- commune simple, une seule géom
-            END AS geom_union
+            ST_Union(geom_2154) AS geom_union   -- union même s'il n'y a qu'un polygone
           FROM decoupages.communes
           WHERE insee_com = ANY($1)
           GROUP BY insee_com
@@ -1153,9 +1142,7 @@ app.post('/centroids', async (req, res) => {
       })));
     }
 
-    // ----------------------------------------------------------
-    // 3. Départements (44, 75, 971…)
-    // ----------------------------------------------------------
+    /* ---------- 3. Départements ---------- */
     if (departements.length) {
       const sqlDep = `
         SELECT
@@ -1174,16 +1161,14 @@ app.post('/centroids', async (req, res) => {
       })));
     }
 
-    // ----------------------------------------------------------
-    // Réponse + cache 1 h
-    // ----------------------------------------------------------
     res.set('Cache-Control', 'public, max-age=3600');
-    return res.json(results);          // [{ code_insee, lon, lat, type }, …]
+    return res.json(results);            // [{ code_insee, lon, lat, type }, …]
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'server_error' });
   }
 });
+
 
 
 
