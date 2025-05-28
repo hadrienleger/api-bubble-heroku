@@ -1069,48 +1069,71 @@ app.get('/ping', async (_req, res) => {
 // ------------------------------------------------------------------
 // CENTROID (NOUVEAU ENDPOINT)
 // ------------------------------------------------------------------
-app.get('/centroid/:code', async (req, res) => {
-  const code = req.params.code;
+app.post('/centroids', async (req, res) => {
+  const input = req.body;  // tableau [{ code_insee, type_collectivite }, ...]
 
-  // Déterminer le SELECT selon le type de code INSEE
-  let sql, params;
-  if (/^\d{5}$/.test(code)) {
-    // Code INSEE de commune ou arrondissement
-    sql = `
-      SELECT
-        ST_X( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lon,
-        ST_Y( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lat
-      FROM decoupages.communes
-      WHERE insee_com = $1 OR insee_arm = $1
-      LIMIT 1
-    `;
-    params = [code];
-  } else if (/^\d{2,3}$/.test(code)) {
-    // Code INSEE de département (2 ou 3 chiffres)
-    sql = `
-      SELECT
-        ST_X( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lon,
-        ST_Y( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lat
-      FROM decoupages.departements
-      WHERE insee_dep = $1
-      LIMIT 1
-    `;
-    params = [code];
-  } else {
-    return res.status(400).json({ error: 'Code INSEE non reconnu' });
+  if (!Array.isArray(input)) {
+    return res.status(400).json({ error: 'Liste attendue' });
   }
 
+  const communes = input
+    .filter(x => x.type_collectivite === 'commune')
+    .map(x => x.code_insee);
+
+  const departements = input
+    .filter(x => x.type_collectivite === 'Département')
+    .map(x => x.code_insee);
+
   try {
-    const { rows } = await pool.query(sql, params);
-    if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const results = [];
+
+    // 1. centroïdes des communes et arrondissements
+    if (communes.length > 0) {
+      const sql = `
+        SELECT
+          insee_com,
+          insee_arm,
+          ST_X(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lon,
+          ST_Y(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lat
+        FROM decoupages.communes
+        WHERE insee_com = ANY($1) OR insee_arm = ANY($1)
+      `;
+      const { rows } = await pool.query(sql, [communes]);
+      results.push(...rows.map(r => ({
+        code_insee: r.insee_arm ?? r.insee_com,
+        lon: r.lon,
+        lat: r.lat,
+        type: 'commune'
+      })));
+    }
+
+    // 2. centroïdes des départements
+    if (departements.length > 0) {
+      const sql = `
+        SELECT
+          insee_dep,
+          ST_X(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lon,
+          ST_Y(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lat
+        FROM decoupages.departements
+        WHERE insee_dep = ANY($1)
+      `;
+      const { rows } = await pool.query(sql, [departements]);
+      results.push(...rows.map(r => ({
+        code_insee: r.insee_dep,
+        lon: r.lon,
+        lat: r.lat,
+        type: 'Département'
+      })));
+    }
 
     res.set('Cache-Control', 'public, max-age=3600');
-    res.json(rows[0]); // { lon, lat }
+    res.json(results); // tableau [{code_insee, lon, lat, type}]
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'server_error' });
   }
 });
+
 
 
 
