@@ -1070,13 +1070,18 @@ app.get('/ping', async (_req, res) => {
 // CENTROID (NOUVEAU ENDPOINT)
 // ------------------------------------------------------------------
 app.post('/centroids', async (req, res) => {
-  const input = req.body;  // tableau [{ code_insee, type_collectivite }, ...]
+  const input = req.body;
 
   if (!Array.isArray(input)) {
-    return res.status(400).json({ error: 'Liste attendue' });
+    return res.status(400).json({ error: 'Liste attendue (array JSON)' });
   }
 
-  const communes = input
+  // --- Séparation des codes par type ---------------------------------------
+  const arrondissements = input
+    .filter(x => x.type_collectivite === 'arrondissement')
+    .map(x => x.code_insee);
+
+  const communesGlobales = input
     .filter(x => x.type_collectivite === 'commune')
     .map(x => x.code_insee);
 
@@ -1087,55 +1092,87 @@ app.post('/centroids', async (req, res) => {
   try {
     const results = [];
 
-    // 1. centroïdes des communes et arrondissements
-    if (communes.length > 0) {
-      const sql = `
+    // ----------------------------------------------------------
+    // 1. Arrondissements (75106, 13207, …)
+    // ----------------------------------------------------------
+    if (arrondissements.length > 0) {
+      const sqlArr = `
         SELECT
-          insee_com,
-          insee_arm,
+          insee_arm                AS code_insee,
           ST_X(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lon,
           ST_Y(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lat
         FROM decoupages.communes
-        WHERE insee_com = ANY($1) OR insee_arm = ANY($1)
+        WHERE insee_arm = ANY($1)
       `;
-      const { rows } = await pool.query(sql, [communes]);
-      results.push(...rows.map(r => ({
-        code_insee: r.insee_arm ?? r.insee_com,
-        lon: r.lon,
-        lat: r.lat,
-        type: 'commune'
-      })));
+      const { rows } = await pool.query(sqlArr, [arrondissements]);
+      results.push(
+        ...rows.map(r => ({
+          code_insee: r.code_insee,
+          lon:        r.lon,
+          lat:        r.lat,
+          type:       'arrondissement'
+        }))
+      );
     }
 
-    // 2. centroïdes des départements
-    if (departements.length > 0) {
-      const sql = `
+    // ----------------------------------------------------------
+    // 2. Communes “globales” (75056, 13055, 44109, …)
+    //    -> on exclut toutes les lignes arrondissement
+    // ----------------------------------------------------------
+    if (communesGlobales.length > 0) {
+      const sqlCom = `
         SELECT
-          insee_dep,
+          insee_com                AS code_insee,
+          ST_X(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lon,
+          ST_Y(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lat
+        FROM decoupages.communes
+        WHERE insee_com = ANY($1)
+          AND insee_arm = insee_com          -- élimine les arrondissements
+      `;
+      const { rows } = await pool.query(sqlCom, [communesGlobales]);
+      results.push(
+        ...rows.map(r => ({
+          code_insee: r.code_insee,
+          lon:        r.lon,
+          lat:        r.lat,
+          type:       'commune'
+        }))
+      );
+    }
+
+    // ----------------------------------------------------------
+    // 3. Départements (44, 75, 971, …)
+    // ----------------------------------------------------------
+    if (departements.length > 0) {
+      const sqlDep = `
+        SELECT
+          insee_dep                AS code_insee,
           ST_X(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lon,
           ST_Y(ST_Transform(ST_PointOnSurface(geom_2154), 4326)) AS lat
         FROM decoupages.departements
         WHERE insee_dep = ANY($1)
       `;
-      const { rows } = await pool.query(sql, [departements]);
-      results.push(...rows.map(r => ({
-        code_insee: r.insee_dep,
-        lon: r.lon,
-        lat: r.lat,
-        type: 'Département'
-      })));
+      const { rows } = await pool.query(sqlDep, [departements]);
+      results.push(
+        ...rows.map(r => ({
+          code_insee: r.code_insee,
+          lon:        r.lon,
+          lat:        r.lat,
+          type:       'Département'
+        }))
+      );
     }
 
+    // ----------------------------------------------------------
+    // Réponse JSON + cache navigateur / CDN
+    // ----------------------------------------------------------
     res.set('Cache-Control', 'public, max-age=3600');
-    res.json(results); // tableau [{code_insee, lon, lat, type}]
+    return res.json(results);               // [{code_insee, lon, lat, type}, …]
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'server_error' });
+    return res.status(500).json({ error: 'server_error' });
   }
 });
-
-
-
 
 
 // ------------------------------------------------------------------
