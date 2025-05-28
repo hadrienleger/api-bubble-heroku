@@ -1074,8 +1074,8 @@ app.get('/centroid/:code', async (req, res) => {
 
   const sql = `
     SELECT
-      ST_X( ST_PointOnSurface(geom4326) ) AS lon,
-      ST_Y( ST_PointOnSurface(geom4326) ) AS lat
+      ST_X( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lon,
+      ST_Y( ST_Transform(ST_PointOnSurface(geom_2154), 4326) ) AS lat
     FROM   ${code.length === 5
               ? 'decoupages.communes'
               : 'decoupages.departements'}
@@ -1087,8 +1087,8 @@ app.get('/centroid/:code', async (req, res) => {
     const { rows } = await pool.query(sql, [code]);
     if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
 
-    res.set('Cache-Control', 'public, max-age=3600'); // 1h cache
-    res.json(rows[0]);                                // { lon: ..., lat: ... }
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json(rows[0]);  // { lon: ..., lat: ... } prêt pour Mapbox
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'server_error' });
