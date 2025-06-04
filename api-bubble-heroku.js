@@ -1067,7 +1067,7 @@ app.get('/ping', async (_req, res) => {
 });
 
 // ------------------------------------------------------------------
-// CENTROID (NOUVEAU ENDPOINT)
+// CENTROID (NOUVEAU ENDPOINT) - ABANDONNE MAIS JE LE GARDE AU CAS OÙ
 // ------------------------------------------------------------------
 // ------------------------------------------------------------------
 //  POST /centroids
@@ -1167,6 +1167,86 @@ app.post('/centroids', async (req, res) => {
     console.error(err);
     return res.status(500).json({ error: 'server_error' });
   }
+});
+
+// ------------------------------------------------------------------
+// COLLECTIVITES (NOUVEAU ENDPOINT)
+// ------------------------------------------------------------------
+// ------------------------------------------------------------------
+// ------------------------------------------------------------------
+//  POST /collectivites_polygons
+//  Corps attendu : [{code_insee, type_collectivite}, …]
+//  Réponse       : FeatureCollection GeoJSON
+// ------------------------------------------------------------------
+app.post('/collectivites_polygons', async (req, res) => {
+  const input = req.body;
+  if (!Array.isArray(input)) return res.status(400).json({error:'array required'});
+
+  const arr  = input.filter(x => x.type_collectivite === 'arrondissement')
+                    .map(x => x.code_insee);
+  const com  = input.filter(x => x.type_collectivite === 'commune')
+                    .map(x => x.code_insee);
+  const dep  = input.filter(x => x.type_collectivite === 'Département')
+                    .map(x => x.code_insee);
+
+  const features = [];
+
+  /* -- 1. arrondissements -------------------------------- */
+  if (arr.length){
+    const sql = `
+      SELECT insee_arm AS code,
+             ST_AsGeoJSON(ST_Transform(geom_2154,4326)) AS geo
+      FROM decoupages.communes
+      WHERE insee_arm = ANY($1)
+    `;
+    const {rows} = await pool.query(sql,[arr]);
+    rows.forEach(r => features.push({
+      type:'Feature',
+      geometry: JSON.parse(r.geo),
+      properties:{ code_insee:r.code, type:'arrondissement' }
+    }));
+  }
+
+  /* -- 2. communes globales (union si P,L,M) -------------- */
+  if (com.length){
+    const sql = `
+      WITH un AS (
+        SELECT insee_com,
+               ST_Union(geom_2154) AS geom
+        FROM decoupages.communes
+        WHERE insee_com = ANY($1)
+        GROUP BY insee_com
+      )
+      SELECT insee_com AS code,
+             ST_AsGeoJSON(ST_Transform(geom,4326)) AS geo
+      FROM un;
+    `;
+    const {rows} = await pool.query(sql,[com]);
+    rows.forEach(r => features.push({
+      type:'Feature',
+      geometry: JSON.parse(r.geo),
+      properties:{ code_insee:r.code, type:'commune' }
+    }));
+  }
+
+  /* -- 3. départements ------------------------------------ */
+  if (dep.length){
+    const sql = `
+      SELECT insee_dep AS code,
+             ST_AsGeoJSON(ST_Transform(geom_2154,4326)) AS geo
+      FROM decoupages.departements
+      WHERE insee_dep = ANY($1)
+    `;
+    const {rows} = await pool.query(sql,[dep]);
+    rows.forEach(r => features.push({
+      type:'Feature',
+      geometry: JSON.parse(r.geo),
+      properties:{ code_insee:r.code, type:'Département' }
+    }));
+  }
+
+  res.set('Cache-Control','public,max-age=3600');
+  res.json({ type:'FeatureCollection', features });
 });
 
 
