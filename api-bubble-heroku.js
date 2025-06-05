@@ -1055,6 +1055,60 @@ app.get('/iris_by_point', async (req, res) => {
 });
 
 // ------------------------------------------------------------------
+// POST /get_iris_zone   (collectivités OU rayon)
+// ------------------------------------------------------------------
+app.post('/get_iris_zone', async (req, res) => {
+  const { mode } = req.body;
+
+  try {
+    /* ---------- MODE 1 : codes INSEE (collectivites) ---------- */
+    if (mode === 'collectivites') {
+      const codes  = req.body.codes_insee || [];   // array
+      if (!codes.length) return res.json([]);      // rien à traiter
+
+      /* table petite etendue → plus légère pour un premier matching */
+      const sql = `
+        SELECT code_iris
+        FROM decoupages.iris_petiteetendue_2022
+        WHERE insee_com = ANY($1) OR insee_dep = ANY($1)
+      `;
+      const { rows } = await pool.query(sql, [codes]);
+      return res.json(rows.map(r => r.code_iris));  // [ "751176510", … ]
+    }
+
+    /* ---------- MODE 2 : cercle rayon autour d'un point ---------- */
+    if (mode === 'rayon') {
+      const { center, radius_km } = req.body;
+      if (!center || radius_km == null) {
+        return res.status(400).json({ error: 'center & radius_km required' });
+      }
+      const { lon, lat } = center;
+
+      /* 1. Constructeur du point 4326   2. Transforme tout en 3857 (mètres) */
+      const sql = `
+        SELECT code_iris
+        FROM decoupages.iris_2022
+        WHERE ST_DWithin(
+          ST_Transform(geom_2154, 3857),                               -- IRIS
+          ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326), 3857),    -- centre
+          $3 * 1000                                                    -- rayon m
+        )
+      `;
+      const { rows } = await pool.query(sql, [lon, lat, radius_km]);
+      return res.json(rows.map(r => r.code_iris));
+    }
+
+    /* ---------- mode inconnu ---------- */
+    return res.status(400).json({ error: 'mode_invalid' });
+
+  } catch (err) {
+    console.error('Erreur /get_iris_zone :', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
+// ------------------------------------------------------------------
 // PING
 // ------------------------------------------------------------------
 app.get('/ping', async (_req, res) => {
