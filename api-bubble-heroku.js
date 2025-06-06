@@ -918,21 +918,77 @@ async function buildIrisDetail(irisCodes) {
 
 
 // ------------------------------------------------------------------
-// ENDPOINT HISTORIQUE POST /get_iris_filtre
+// POST /get_iris_filtre  (localisation + critères éventuels)
 // ------------------------------------------------------------------
 app.post('/get_iris_filtre', async (req, res) => {
   console.log('>>> BODY RECEIVED FROM BUBBLE:', JSON.stringify(req.body, null, 2));
   console.time('TOTAL /get_iris_filtre');
 
   try {
-    const { params, criteria } = req.body;
-    if (!params || !params.selected_localities) {
-      console.timeEnd('TOTAL /get_iris_filtre');
-      return res.status(400).json({ error: 'Paramètres de localisation manquants (selected_localities).' });
+    /************  0.  LOCALISATION GÉNÉRIQUE  ****************/
+    const { mode, codes_insee, center, radius_km, criteria = {} } = req.body;
+
+    let arrayIrisLoc  = [];   // liste des codes IRIS trouvés
+    let communesFinal = [];   // communes concernées (pour l’onglet « Communes »)
+
+    /* ---------- MODE 1 : collectivités ---------- */
+    if (mode === 'collectivites') {
+      const fakeParams = {
+        selected_localities: (codes_insee || []).map(c => ({
+          code_insee:        c,
+          type_collectivite: 'commune'    // valeur neutre, juste pour ré-utiliser la fonction
+        }))
+      };
+
+      const r = await getIrisLocalisationAndSecurite(
+                  fakeParams,
+                  criteria?.securite          // le critère sécurité, s’il existe déjà
+                );
+
+      arrayIrisLoc  = r.arrayIrisLoc;
+      communesFinal = r.communesFinal;
+
+    /* ---------- MODE 2 : cercle rayon ---------- */
+    } else if (mode === 'rayon') {
+      const { lon, lat } = center || {};
+      if (lon == null || lat == null || radius_km == null) {
+        return res.status(400).json({ error: 'center/radius missing' });
+      }
+
+      const sql = `
+        SELECT code_iris
+        FROM decoupages.iris_grandeetendue_2022
+        WHERE ST_DWithin(
+                geom_2154,
+                ST_Transform(
+                  ST_SetSRID(ST_MakePoint($1,$2),4326), 2154),
+                $3 * 1000
+              )
+      `;
+      const { rows } = await pool.query(sql, [lon, lat, radius_km]);
+      arrayIrisLoc = rows.map(r => r.code_iris);
+
+      /* communesFinal = toutes les communes touchées */
+      const qCom = `
+        SELECT DISTINCT insee_com
+        FROM decoupages.iris_grandeetendue_2022
+        WHERE code_iris = ANY($1)
+      `;
+      const cRes = await pool.query(qCom, [arrayIrisLoc]);
+      communesFinal = cRes.rows.map(r => r.insee_com);
+
+    /* ---------- mode inconnu ---------- */
+    } else {
+      return res.status(400).json({ error: 'mode invalid' });
     }
 
-    const { arrayIrisLoc, communesFinal } = await getIrisLocalisationAndSecurite(params, criteria?.securite);
+    /* Aucun IRIS trouvé → réponse vide */
+    if (!arrayIrisLoc.length) {
+      console.timeEnd('TOTAL /get_iris_filtre');
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
+    }
 
+    /************  1.  PIPELINE DE CRITÈRES (inchangé)  ************/
     if (!arrayIrisLoc.length) {
       console.timeEnd('TOTAL /get_iris_filtre');
       return res.json({ nb_iris: 0, iris: [], communes: [] });
