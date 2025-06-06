@@ -1062,17 +1062,22 @@ app.post('/get_iris_zone', async (req, res) => {
 
   try {
     /* ---------- MODE 1 : codes INSEE (collectivites) ---------- */
+    /* -------------------------------------------------------- */
+    /*  Étape 1 : récupérer les codes IRIS + la liste de communes */
+    /* -------------------------------------------------------- */
     if (mode === 'collectivites') {
-      const codes = req.body.codes_insee || [];        // tableau de strings
-      if (!codes.length) return res.json([]);          // rien à faire
+      const codes = req.body.codes_insee || [];
+      if (!codes.length)
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
 
       const sql = `
-        SELECT code_iris
+        SELECT code_iris, insee_com
         FROM decoupages.iris_petiteetendue_2022
         WHERE insee_com = ANY($1) OR insee_dep = ANY($1)
-      `;
-      const { rows } = await pool.query(sql, [codes]);
-      return res.json(rows.map(r => r.code_iris));     // [ "751176510", … ]
+        `;
+        const { rows }   = await pool.query(sql, [codes]);
+        var irisCodes    = rows.map(r => r.code_iris);
+        var communesList = [...new Set(rows.map(r => r.insee_com))];   // distinct
     }
 
     /* ---------- MODE 2 : cercle rayon autour d'un point ---------- */
@@ -1086,7 +1091,7 @@ app.post('/get_iris_zone', async (req, res) => {
       console.log(`[get_iris_zone] mode=rayon lon=${lon} lat=${lat} r=${radius_km}km`);
 
       const sql = `
-        SELECT code_iris
+        SELECT code_iris, insee_com
         FROM decoupages.iris_grandeetendue_2022
         WHERE ST_DWithin(
                 geom_2154,
@@ -1099,11 +1104,40 @@ app.post('/get_iris_zone', async (req, res) => {
       console.timeEnd('rayon_query');
 
       console.log(`[get_iris_zone] → ${rows.length} IRIS trouvés`);
-      return res.json(rows.map(r => r.code_iris));
+      var irisCodes    = rows.map(r => r.code_iris);
+      var communesList = [...new Set(rows.map(r => r.insee_com))];
     }
 
     /* ---------- mode inconnu ---------- */
-    return res.status(400).json({ error: 'mode_invalid' });
+     if (!['collectivites', 'rayon'].includes(mode)) {
+       return res.status(400).json({ error: 'mode_invalid' });
+     }
+    /* -------------------------------------------------------- */
+    /*  Étape 2 : si rien trouvé → réponse vide                */
+    /* -------------------------------------------------------- */
+    if (!irisCodes?.length) {
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
+    }
+
+    /* -------------------------------------------------------- */
+    /*  Étape 3 : construire le détail des IRIS (sans critère)  */
+    /* -------------------------------------------------------- */
+    const irisDetail = await buildIrisDetail(irisCodes);           // déjà dispo
+
+    /* -------------------------------------------------------- */
+    /*  Étape 4 : regroupement par communes                     */
+    /* -------------------------------------------------------- */
+    const communes = await groupByCommunes(irisCodes, communesList);
+
+    /* -------------------------------------------------------- */
+    /*  Étape 5 : réponse finale                                */
+    /* -------------------------------------------------------- */
+    return res.json({
+      nb_iris : irisCodes.length,
+      iris    : irisDetail,
+      communes
+    });
+
 
   } catch (err) {
     console.error('Erreur /get_iris_zone :', err);
