@@ -246,14 +246,14 @@ async function getIrisLocalisationAndSecurite(params, securite) {
     }
   }
 
-  console.time('C) iris_2022 query');
+  console.time('C) iris_grandeetendue_2022 query');
   const qIris = `
     SELECT code_iris
     FROM decoupages.iris_grandeetendue_2022
     WHERE insee_com = ANY($1)
   `;
   let rIris = await pool.query(qIris, [communesFinal]);
-  console.timeEnd('C) iris_2022 query');
+  console.timeEnd('C) iris_grandeetendue_2022 query');
 
   let arrayIrisLoc = rIris.rows.map(rr => rr.code_iris);
   console.log('=> arrayIrisLoc.length =', arrayIrisLoc.length);
@@ -1090,11 +1090,11 @@ app.post('/get_iris_zone', async (req, res) => {
     /* 1) Point reçu en 4326  → 2) transformé en 2154, système métrique */
     const sql = `
       SELECT code_iris
-      FROM decoupages.iris_2022                -- ou iris_grandeetendue_2022
+      FROM decoupages.iris_grandeetendue_2022
       WHERE ST_DWithin(
-              geom_2154,                                           -- polygone IRIS
+              geom_2154,
               ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326),2154),
-              $3 * 1000                                            -- rayon mètres
+              $3 * 1000
             )
     `;
 
@@ -1106,7 +1106,8 @@ app.post('/get_iris_zone', async (req, res) => {
 
     return res.json(rows.map(r => r.code_iris));
   }
-
+}
+}); 
 
 
 // ------------------------------------------------------------------
