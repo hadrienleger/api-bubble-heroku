@@ -1087,12 +1087,12 @@ app.post('/get_iris_zone', async (req, res) => {
       /* 1. Constructeur du point 4326   2. Transforme tout en 3857 (mètres) */
       const sql = `
         SELECT code_iris
-        FROM decoupages.iris_grandeetendue_2022
+        FROM decoupages.iris_2022          -- ou iris_grandeetendue_2022
         WHERE ST_DWithin(
-          ST_Transform(geom_2154, 3857),                               -- IRIS
-          ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326), 3857),    -- centre
-          $3 * 1000                                                    -- rayon m
-        )
+                geom_2154,
+                ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326),2154),
+                $3 * 1000
+              )
       `;
       const { rows } = await pool.query(sql, [lon, lat, radius_km]);
       return res.json(rows.map(r => r.code_iris));
