@@ -1076,36 +1076,37 @@ app.post('/get_iris_zone', async (req, res) => {
       return res.json(rows.map(r => r.code_iris));  // [ "751176510", … ]
     }
 
-    /* ---------- MODE 2 : cercle rayon autour d'un point ---------- */
-    if (mode === 'rayon') {
-      const { center, radius_km } = req.body;
-      if (!center || radius_km == null) {
-        return res.status(400).json({ error: 'center & radius_km required' });
-      }
-      const { lon, lat } = center;
-
-      /* 1. Constructeur du point 4326   2. Transforme tout en 3857 (mètres) */
-      const sql = `
-        SELECT code_iris
-        FROM decoupages.iris_2022          -- ou iris_grandeetendue_2022
-        WHERE ST_DWithin(
-                geom_2154,
-                ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326),2154),
-                $3 * 1000
-              )
-      `;
-      const { rows } = await pool.query(sql, [lon, lat, radius_km]);
-      return res.json(rows.map(r => r.code_iris));
+  /* ---------- MODE 2 : cercle rayon autour d'un point ---------- */
+  if (mode === 'rayon') {
+    const { center, radius_km } = req.body;
+    if (!center || radius_km == null) {
+      return res.status(400).json({ error: 'center & radius_km required' });
     }
+    const { lon, lat } = center;
 
-    /* ---------- mode inconnu ---------- */
-    return res.status(400).json({ error: 'mode_invalid' });
+    /* ── LOG de contrôle ───────────────────────────────────────── */
+    console.log(`[get_iris_zone] mode=rayon  lon=${lon}  lat=${lat}  r=${radius_km} km`);
 
-  } catch (err) {
-    console.error('Erreur /get_iris_zone :', err);
-    return res.status(500).json({ error: 'server_error' });
+    /* 1) Point reçu en 4326  → 2) transformé en 2154, système métrique */
+    const sql = `
+      SELECT code_iris
+      FROM decoupages.iris_2022                -- ou iris_grandeetendue_2022
+      WHERE ST_DWithin(
+              geom_2154,                                           -- polygone IRIS
+              ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326),2154),
+              $3 * 1000                                            -- rayon mètres
+            )
+    `;
+
+    console.time('rayon_query');
+    const { rows } = await pool.query(sql, [lon, lat, radius_km]);
+    console.timeEnd('rayon_query');
+
+    console.log(`[get_iris_zone] → ${rows.length} IRIS trouvés`);
+
+    return res.json(rows.map(r => r.code_iris));
   }
-});
+
 
 
 // ------------------------------------------------------------------
