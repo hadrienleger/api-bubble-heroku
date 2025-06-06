@@ -249,7 +249,7 @@ async function getIrisLocalisationAndSecurite(params, securite) {
   console.time('C) iris_2022 query');
   const qIris = `
     SELECT code_iris
-    FROM decoupages.iris_2022
+    FROM decoupages.iris_grandeetendue_2022
     WHERE insee_com = ANY($1)
   `;
   let rIris = await pool.query(qIris, [communesFinal]);
@@ -670,7 +670,7 @@ async function applyColleges(irisList, colCrit) {
   console.time('Colleges coverage');
   const sqlCov = `
     SELECT code_iris, insee_dep
-    FROM decoupages.iris_2022
+    FROM decoupages.iris_grandeetendue_2022
     WHERE code_iris = ANY($1)
   `;
   let covRes = await pool.query(sqlCov, [irisList]);
@@ -776,7 +776,7 @@ async function gatherSecuriteByIris(irisList) {
     SELECT i.code_iris,
            i.nom_iris,
            d.note_sur_20
-    FROM decoupages.iris_2022 i
+    FROM decoupages.iris_grandeetendue_2022 i
     LEFT JOIN decoupages.communes c
            ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
     LEFT JOIN delinquance.notes_insecurite_geom_complet d
@@ -813,7 +813,7 @@ async function groupByCommunes(irisList, communesFinal) {
     expanded AS (
       SELECT s.iris, i.insee_com
       FROM selected_iris s
-      JOIN decoupages.iris_2022 i ON i.code_iris = s.iris
+      JOIN decoupages.iris_grandeetendue_2022 i ON i.code_iris = s.iris
     )
     SELECT e.insee_com, c.nom AS nom_com,
            c.insee_dep, c.nom_dep,
@@ -874,7 +874,7 @@ async function buildIrisDetail(irisCodes) {
            -- Paris, Lyon, Marseille : on prend insee_arm si non vide
            COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_com,
            c.nom AS nom_com
-    FROM decoupages.iris_2022 i
+    FROM decoupages.iris_grandeetendue_2022 i
     JOIN decoupages.communes c
          ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
     WHERE i.code_iris = ANY($1)
@@ -1030,7 +1030,7 @@ app.get('/iris_by_point', async (req, res) => {
   try {
     const sql = `
       SELECT code_iris
-      FROM decoupages.iris_2022
+      FROM decoupages.iris_grandeetendue_2022
       WHERE ST_Contains(
               geom_2154,
               ST_Transform(
@@ -1087,7 +1087,7 @@ app.post('/get_iris_zone', async (req, res) => {
       /* 1. Constructeur du point 4326   2. Transforme tout en 3857 (mètres) */
       const sql = `
         SELECT code_iris
-        FROM decoupages.iris_2022
+        FROM decoupages.iris_grandeetendue_2022
         WHERE ST_DWithin(
           ST_Transform(geom_2154, 3857),                               -- IRIS
           ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326), 3857),    -- centre
