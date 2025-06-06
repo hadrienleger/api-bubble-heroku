@@ -1063,51 +1063,54 @@ app.post('/get_iris_zone', async (req, res) => {
   try {
     /* ---------- MODE 1 : codes INSEE (collectivites) ---------- */
     if (mode === 'collectivites') {
-      const codes  = req.body.codes_insee || [];   // array
-      if (!codes.length) return res.json([]);      // rien à traiter
+      const codes = req.body.codes_insee || [];        // tableau de strings
+      if (!codes.length) return res.json([]);          // rien à faire
 
-      /* table petite etendue → plus légère pour un premier matching */
       const sql = `
         SELECT code_iris
         FROM decoupages.iris_petiteetendue_2022
         WHERE insee_com = ANY($1) OR insee_dep = ANY($1)
       `;
       const { rows } = await pool.query(sql, [codes]);
-      return res.json(rows.map(r => r.code_iris));  // [ "751176510", … ]
+      return res.json(rows.map(r => r.code_iris));     // [ "751176510", … ]
     }
 
-  /* ---------- MODE 2 : cercle rayon autour d'un point ---------- */
-  if (mode === 'rayon') {
-    const { center, radius_km } = req.body;
-    if (!center || radius_km == null) {
-      return res.status(400).json({ error: 'center & radius_km required' });
+    /* ---------- MODE 2 : cercle rayon autour d'un point ---------- */
+    if (mode === 'rayon') {
+      const { center, radius_km } = req.body;
+      if (!center || radius_km == null) {
+        return res.status(400).json({ error: 'center & radius_km required' });
+      }
+      const { lon, lat } = center;
+
+      console.log(`[get_iris_zone] mode=rayon lon=${lon} lat=${lat} r=${radius_km}km`);
+
+      const sql = `
+        SELECT code_iris
+        FROM decoupages.iris_grandeetendue_2022
+        WHERE ST_DWithin(
+                geom_2154,
+                ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326),2154),
+                $3 * 1000
+              )
+      `;
+      console.time('rayon_query');
+      const { rows } = await pool.query(sql, [lon, lat, radius_km]);
+      console.timeEnd('rayon_query');
+
+      console.log(`[get_iris_zone] → ${rows.length} IRIS trouvés`);
+      return res.json(rows.map(r => r.code_iris));
     }
-    const { lon, lat } = center;
 
-    /* ── LOG de contrôle ───────────────────────────────────────── */
-    console.log(`[get_iris_zone] mode=rayon  lon=${lon}  lat=${lat}  r=${radius_km} km`);
+    /* ---------- mode inconnu ---------- */
+    return res.status(400).json({ error: 'mode_invalid' });
 
-    /* 1) Point reçu en 4326  → 2) transformé en 2154, système métrique */
-    const sql = `
-      SELECT code_iris
-      FROM decoupages.iris_grandeetendue_2022
-      WHERE ST_DWithin(
-              geom_2154,
-              ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326),2154),
-              $3 * 1000
-            )
-    `;
-
-    console.time('rayon_query');
-    const { rows } = await pool.query(sql, [lon, lat, radius_km]);
-    console.timeEnd('rayon_query');
-
-    console.log(`[get_iris_zone] → ${rows.length} IRIS trouvés`);
-
-    return res.json(rows.map(r => r.code_iris));
+  } catch (err) {
+    console.error('Erreur /get_iris_zone :', err);
+    return res.status(500).json({ error: 'server_error' });
   }
-}
-}); 
+});   // ← ferme app.post
+
 
 
 // ------------------------------------------------------------------
