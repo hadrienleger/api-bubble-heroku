@@ -1074,38 +1074,85 @@ app.post('/get_iris_filtre', async (req, res) => {
 // ------------------------------------------------------------------
 // NOUVEAU ENDPOINT : GET /iris_by_point?lat=...&lon=...
 // ------------------------------------------------------------------
+/* --------------------------------------------------------------
+   GET /iris_by_point
+   --------------------------------------------------------------
+   Params :
+      lat, lon        (obligatoires)
+      radius_km       (optionnel, défaut 0.3)
+   Retour :
+      {
+        nb_iris : n,
+        iris    : [ { … + est_cible:true/false } ],
+        communes: [ … ]
+      }
+---------------------------------------------------------------- */
 app.get('/iris_by_point', async (req, res) => {
-  const { lat, lon } = req.query;
+  const { lat, lon, radius_km = '0.3' } = req.query;
   if (!lat || !lon) {
     return res.status(400).json({ error: 'lat & lon are required' });
   }
 
   try {
-    const sql = `
-      SELECT code_iris
+    const radius_m = Number(radius_km) * 1000;     // ⇒ mètres
+
+    /* A) cible = l’IRIS qui contient le point ----------------- */
+    const cibleSql = `
+      SELECT code_iris, geom_2154
       FROM decoupages.iris_grandeetendue_2022
       WHERE ST_Contains(
               geom_2154,
-              ST_Transform(
-                ST_SetSRID(ST_MakePoint($1,$2),4326),
-                2154
-              )
+              ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326),2154)
             )
       LIMIT 1
     `;
-    const { rows } = await pool.query(sql, [Number(lon), Number(lat)]);
-    if (!rows.length) {
+    const cibleRes = await pool.query(cibleSql, [lon, lat]);
+    if (!cibleRes.rows.length) {
       return res.status(404).json({ error: 'IRIS not found' });
     }
-    const codeIris = rows[0].code_iris;
+    const codeCible = cibleRes.rows[0].code_iris;
 
-    const detail = await buildIrisDetail([codeIris]);
-    return res.json(detail[0]);
+    /* B) voisins = IRIS coupant le disque ---------------------- */
+    const voisinsSql = `
+      SELECT i.code_iris
+      FROM decoupages.iris_grandeetendue_2022 i
+      WHERE ST_DWithin(
+              i.geom_2154,
+              ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326),2154),
+              $3
+            )
+    `;
+    const vRes = await pool.query(voisinsSql, [lon, lat, radius_m]);
+
+    const irisList = vRes.rows.map(r => r.code_iris);
+    if (!irisList.includes(codeCible)) irisList.push(codeCible); // sécurité
+
+    /* C) détail complet via buildIrisDetail -------------------- */
+    const detail = await buildIrisDetail(irisList);   // déjà existant
+
+    /* D) flag est_cible et communes --------------------------- */
+    const enriched = detail.map(r => ({
+      ...r,
+      est_cible: r.code_iris === codeCible
+    }));
+
+    const communesData = await groupByCommunes(
+      irisList,
+      enriched.map(r => r.insee_com).filter(Boolean)
+    );
+
+    res.json({
+      nb_iris : enriched.length,
+      iris    : enriched,
+      communes: communesData
+    });
+
   } catch (err) {
-    console.error('Erreur /iris_by_point :', err);
-    return res.status(500).json({ error: 'server' });
+    console.error('/iris_by_point error:', err);
+    res.status(500).json({ error: 'server' });
   }
 });
+
 
 // ------------------------------------------------------------------
 // PING
