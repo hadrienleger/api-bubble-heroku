@@ -928,6 +928,30 @@ app.post('/get_iris_filtre', async (req, res) => {
     /************  0.  LOCALISATION GÉNÉRIQUE  ****************/
     const { mode, codes_insee, center, radius_km, criteria = {} } = req.body;
 
+    /************  0.bis  PARAMÉTRAGE RECHERCHE SANS LOCALISATION (CRITERIA-ONLY)  ****************/
+    /* -----------------------------------------------------------
+     *  RACCROCHAGE DIRECT : si Bubble envoie déjà une liste IRIS
+     * --------------------------------------------------------- */
+    if (Array.isArray(req.body.iris_base) && req.body.iris_base.length) {
+      console.log(`🔄 Bypass localisation : ${req.body.iris_base.length} IRIS reçus`);
+
+      // A) on ré-utilise directement cette liste
+      let arrayIrisLoc  = req.body.iris_base;
+
+      // B) petites communes associées (pour l’onglet “Communes”)
+      const sql = `
+        SELECT DISTINCT insee_com
+        FROM decoupages.iris_grandeetendue_2022
+        WHERE code_iris = ANY($1)
+      `;
+      const { rows }   = await pool.query(sql, [arrayIrisLoc]);
+      let  communesFinal = rows.map(r => r.insee_com);
+
+      /* --- et on saute directement au bloc de filtres --- */
+      await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria);
+      return;   // plus besoin du code juste après
+    }
+
     let arrayIrisLoc  = [];   // liste des codes IRIS trouvés
     let communesFinal = [];   // communes concernées (pour l’onglet « Communes »)
 
@@ -985,84 +1009,9 @@ app.post('/get_iris_filtre', async (req, res) => {
       return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
 
-    /************  1.  PIPELINE DE CRITÈRES (inchangé)  ************/
-    if (!arrayIrisLoc.length) {
-      console.timeEnd('TOTAL /get_iris_filtre');
-      return res.json({ nb_iris: 0, iris: [], communes: [] });
-    }
-
-    let { irisSet: irisAfterDVF, dvfCountByIris } = await applyDVF(arrayIrisLoc, criteria?.dvf);
-    if (!irisAfterDVF.length) {
-      console.timeEnd('TOTAL /get_iris_filtre');
-      return res.json({ nb_iris: 0, iris: [], communes: [] });
-    }
-
-    let { irisSet: irisAfterRevenus, revenusByIris } = await applyRevenus(irisAfterDVF, criteria?.filosofi);
-    if (!irisAfterRevenus.length) {
-      console.timeEnd('TOTAL /get_iris_filtre');
-      return res.json({ nb_iris: 0, iris: [], communes: [] });
-    }
-
-    let { irisSet: irisAfterSoc, logSocByIris } = await applyLogSoc(irisAfterRevenus, criteria?.filosofi);
-    if (!irisAfterSoc.length) {
-      console.timeEnd('TOTAL /get_iris_filtre');
-      return res.json({ nb_iris: 0, iris: [], communes: [] });
-    }
-
-    let { irisSet: irisAfterEco, ecolesByIris } = await applyEcoles(irisAfterSoc, criteria?.ecoles);
-    if (!irisAfterEco.length) {
-      return res.json({ nb_iris: 0, iris: [], communes: [] });
-    }
-
-    let { irisSet: irisAfterCols, collegesByIris } = await applyColleges(irisAfterEco, criteria?.colleges);
-    if (!irisAfterCols.length) {
-      return res.json({ nb_iris: 0, iris: [], communes: [] });
-    }
-
-    let { irisSet: irisAfterPrixM2, prixMedianByIris } = await applyPrixMedian(irisAfterCols, criteria?.prixMedianM2);
-    if (!irisAfterPrixM2.length) {
-      return res.json({ nb_iris: 0, iris: [], communes: [] });
-    }
-
-    let dvfTotalByIris = await getDVFCountTotal(irisAfterPrixM2);
-    let { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(irisAfterPrixM2);
-
-    let irisFinalDetail = [];
-    for (let iris of irisAfterPrixM2) {
-      let dvf_count = dvfCountByIris[iris] || 0;
-      let dvf_count_total = dvfTotalByIris[iris] || 0;
-      let rev = revenusByIris[iris] || {};
-      let soc = logSocByIris[iris] || {};
-      let ecolesVal = ecolesByIris[iris] || [];
-      let colsVal = collegesByIris[iris] || [];
-      let securiteVal = securiteByIris[iris] || [];
-      let nomIris = irisNameByIris[iris] || null;
-
-      irisFinalDetail.push({
-        code_iris: iris,
-        nom_iris: nomIris,
-        dvf_count,
-        dvf_count_total,
-        mediane_rev_decl: rev.mediane_rev_decl ?? null,
-        part_log_soc: soc.part_log_soc ?? null,
-        securite: (securiteVal.length > 0) ? securiteVal[0].note : null,
-        ecoles: ecolesVal,
-        colleges: colsVal,
-        prix_median_m2: prixMedianByIris[iris] ?? null
-      });
-    }
-
-    let communesData = await groupByCommunes(irisAfterPrixM2, communesFinal);
-
-    console.log('=> final irisAfterSoc.length =', irisAfterSoc.length);
-    const finalResp = {
-      nb_iris: irisAfterPrixM2.length,
-      iris: irisFinalDetail,
-      communes: communesData
-    };
-
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json(finalResp);
+    /* ✅ On a trouvé des IRIS : on lance maintenant tous les filtres */
+    await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria);
+    return;      // on sort, le reste du handler ne s’exécute plus
 
   } catch (err) {
     console.error('Erreur dans /get_iris_filtre :', err);
@@ -1070,6 +1019,86 @@ app.post('/get_iris_filtre', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+/* ------------------------------------------------------------------
+ * HELPER : exécute tous les filtres et renvoie la réponse Bubble
+ * ------------------------------------------------------------------ */
+async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria) {
+  /************  1.  PIPELINE DE CRITÈRES  ************/
+  if (!arrayIrisLoc.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  // — DVF —
+  const { irisSet: irisAfterDVF, dvfCountByIris } = await applyDVF(arrayIrisLoc, criteria?.dvf);
+  if (!irisAfterDVF.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  // — Revenus —
+  const { irisSet: irisAfterRevenus, revenusByIris } = await applyRevenus(irisAfterDVF, criteria?.filosofi);
+  if (!irisAfterRevenus.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  // — Logements sociaux —
+  const { irisSet: irisAfterSoc, logSocByIris } = await applyLogSoc(irisAfterRevenus, criteria?.filosofi);
+  if (!irisAfterSoc.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  // — Écoles —
+  const { irisSet: irisAfterEco, ecolesByIris } = await applyEcoles(irisAfterSoc, criteria?.ecoles);
+  if (!irisAfterEco.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  // — Collèges —
+  const { irisSet: irisAfterCols, collegesByIris } = await applyColleges(irisAfterEco, criteria?.colleges);
+  if (!irisAfterCols.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  // — Prix médian m² —
+  const { irisSet: irisAfterPrixM2, prixMedianByIris } = await applyPrixMedian(irisAfterCols, criteria?.prixMedianM2);
+  if (!irisAfterPrixM2.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  // derniers compléments
+  const dvfTotalByIris = await getDVFCountTotal(irisAfterPrixM2);
+  const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(irisAfterPrixM2);
+  const communesData = await groupByCommunes(irisAfterPrixM2, communesFinal);
+
+  // construction de la réponse finale
+  const irisFinalDetail = irisAfterPrixM2.map(iris => ({
+    code_iris: iris,
+    nom_iris: irisNameByIris[iris] ?? null,
+    dvf_count: dvfCountByIris[iris] ?? 0,
+    dvf_count_total: dvfTotalByIris[iris] ?? 0,
+    mediane_rev_decl: revenusByIris[iris]?.mediane_rev_decl ?? null,
+    part_log_soc: logSocByIris[iris]?.part_log_soc ?? null,
+    securite: securiteByIris[iris]?.[0]?.note ?? null,
+    ecoles: ecolesByIris[iris] ?? [],
+    colleges: collegesByIris[iris] ?? [],
+    prix_median_m2: prixMedianByIris[iris] ?? null
+  }));
+
+  console.log('=> final irisAfterSoc.length =', irisAfterSoc.length);
+  console.timeEnd('TOTAL /get_iris_filtre');
+  return res.json({
+    nb_iris: irisAfterPrixM2.length,
+    iris: irisFinalDetail,
+    communes: communesData
+  });
+}
 
 // ------------------------------------------------------------------
 // NOUVEAU ENDPOINT : GET /iris_by_point?lat=...&lon=...
