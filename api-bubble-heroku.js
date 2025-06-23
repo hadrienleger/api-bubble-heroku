@@ -1115,18 +1115,28 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
   }
 
   // ✅ Final response
-  console.log('✅ Tous les filtres appliqués →', iris.length, 'IRIS');
+  const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(iris);
+  const dvfTotalByIris = await getDVFCountTotal(iris);
 
+  const irisFinalDetail = iris.map(code => ({
+    code_iris       : code,
+    nom_iris        : irisNameByIris[code] ?? null,
+    dvf_count       : dvfCountByIris[code] ?? 0,
+    dvf_count_total : dvfTotalByIris[code] ?? 0,
+    mediane_rev_decl: revenusByIris[code]?.mediane_rev_decl ?? null,
+    part_log_soc    : logSocByIris[code]?.part_log_soc    ?? null,
+    securite        : securiteFromApply[code]?.[0]?.note
+                      ?? securiteByIris[code]?.[0]?.note  ?? null,
+    prix_median_m2  : prixMedianByIris[code]              ?? null,
+    ecoles          : ecolesByIris[code]                  ?? [],
+    colleges        : collegesByIris[code]                ?? []
+  }));
+
+  console.log('✅ Tous les filtres appliqués →', irisFinalDetail.length, 'IRIS');
   return res.json({
-    nb_iris: iris.length,
-    iris,
-    communes: communesFinal,
-    securite: securiteFromApply,
-    prixMedianM2: prixMedianByIris,
-    dvf: dvfCountByIris,
-    revenus: revenusByIris,
-    ecoles: ecolesByIris,
-    colleges: collegesByIris
+    nb_iris : irisFinalDetail.length,
+    iris    : irisFinalDetail,
+    communes: communesFinal
   });
 }
 
