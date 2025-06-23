@@ -1089,7 +1089,7 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mod
 
     // — Securite —
   let irisAfterSecu = arrayIrisLoc;
-  let securiteByIris = {};
+let securiteByIris = {};
   if (mode === 'rayon') {
     const secuRes = await applySecurite(arrayIrisLoc, criteria?.securite);
     irisAfterSecu = secuRes.irisSet;
@@ -1149,8 +1149,8 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mod
     dvf_count_total: dvfTotalByIris[iris] ?? 0,
     mediane_rev_decl: revenusByIris[iris]?.mediane_rev_decl ?? null,
     part_log_soc: logSocByIris[iris]?.part_log_soc ?? null,
-    securite: (securiteByIris[iris] ?? criteria?.securite)
-              ? securiteByIris[iris]?.[0]?.note ?? null
+    securite: (securiteFromApply[iris] ?? criteria?.securite)
+              ? securiteFromApply[iris]?.[0]?.note ?? null
               : securiteByIris[iris]?.[0]?.note ?? null,
     ecoles: ecolesByIris[iris] ?? [],
     colleges: collegesByIris[iris] ?? [],
