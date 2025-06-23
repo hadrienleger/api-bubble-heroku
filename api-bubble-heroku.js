@@ -1044,6 +1044,7 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mod
     let iris = arrayIrisLoc;
   let securiteFromApply = {};
 
+console.log('🔍 Application du filtre sécurité');
 // — Sécurité (s’applique dans tous les cas maintenant)
 const resSecu = await applySecurite(iris, criteria?.securite);
 iris = resSecu.irisSet;
@@ -1063,6 +1064,7 @@ if (!iris.length) {
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
+console.log('🔍 Application du filtre revenus');
   // — Revenus
   const { irisSet: afterRevenus, revenusByIris } = await applyRevenus(iris, criteria?.filosofi);
   iris = afterRevenus;
@@ -1071,21 +1073,25 @@ if (!iris.length) {
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
+console.log('🔍 Application du filtre log soc');
   // — Logements sociaux
   const { irisSet: afterSoc, logSocByIris } = await applyLogSoc(iris, criteria?.filosofi);
   iris = afterSoc;
   if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
 
+console.log('🔍 Application du filtre écoles');
   // — Écoles
   const { irisSet: afterEco, ecolesByIris } = await applyEcoles(iris, criteria?.ecoles);
   iris = afterEco;
   if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
 
+console.log('🔍 Application du filtre collèges');
   // — Collèges
   const { irisSet: afterCols, collegesByIris } = await applyColleges(iris, criteria?.colleges);
   iris = afterCols;
   if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
 
+console.log('🔍 Application du filtre prix median');
   // — Prix médian
   const { irisSet: afterPrix, prixMedianByIris } = await applyPrixMedian(iris, criteria?.prixMedianM2);
   iris = afterPrix;
