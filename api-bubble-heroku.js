@@ -580,8 +580,11 @@ async function applySecurite(irisList, secCrit) {
   const sql = `
     SELECT i.code_iris, d.note_sur_20
     FROM decoupages.iris_grandeetendue_2022 i
-    JOIN delinquance.notes_insecurite_geom_complet d
-         ON (d.insee_com = i.insee_com OR d.insee_com = i.insee_arm)
+JOIN decoupages.communes c
+     ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+JOIN delinquance.notes_insecurite_geom_complet d
+     ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
+
     WHERE ${where.join(' AND ')}
   `;
   const r = await pool.query(sql, vals);
