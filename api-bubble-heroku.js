@@ -553,7 +553,7 @@ async function applyLogSoc(irisList, lsCriteria) {
 // --------------------------------------------------------------
 // H) Critère Sécurité (dans le cas du mode rayon ; mode collectivités, filtrage préalable hérité)
 // --------------------------------------------------------------
-async function applySecurite(irisList, secCrit) {
+async function applySecurite (irisList, secCrit) {
   if (!irisList.length || !secCrit) {
     return { irisSet: irisList, securiteByIris: {} };
   }
@@ -562,33 +562,40 @@ async function applySecurite(irisList, secCrit) {
     return { irisSet: irisList, securiteByIris: {} };
   }
 
-  // On part de la table notes_insecurite_geom_complet (à l'échelle commune)
+  // 1. Construire WHERE + valeurs en gardant les index cohérents
+  let where   = ['i.code_iris = ANY($1)'];
+  let vals    = [irisList];
+  let idx     = 2;
+
+  if (min != null) {
+    where.push(`d.note_sur_20 >= $${idx}`);
+    vals.push(min);
+    idx++;
+  }
+  if (max != null) {
+    where.push(`d.note_sur_20 <= $${idx}`);
+    vals.push(max);
+  }
+
+  // 2. Exécuter la requête
   const sql = `
     SELECT i.code_iris, d.note_sur_20
     FROM decoupages.iris_grandeetendue_2022 i
     JOIN delinquance.notes_insecurite_geom_complet d
          ON (d.insee_com = i.insee_com OR d.insee_com = i.insee_arm)
-    WHERE i.code_iris = ANY($1)
-      ${min != null ? `AND d.note_sur_20 >= $2` : ''}
-      ${max != null ? `AND d.note_sur_20 <= $3` : ''}
+    WHERE ${where.join(' AND ')}
   `;
-  const vals = [irisList];
-  if (min != null) vals.push(min);
-  if (max != null) vals.push(max);
+  const r = await pool.query(sql, vals);
 
-  const r   = await pool.query(sql, vals);
-
+  // 3. Préparer la réponse
   const securiteByIris = {};
-  const irisOK         = [];
+  const irisOK = [];
   for (const row of r.rows) {
     securiteByIris[row.code_iris] = [{ note: Number(row.note_sur_20) }];
     irisOK.push(row.code_iris);
   }
 
-  return {
-    irisSet: irisList.filter(ci => irisOK.includes(ci)),
-    securiteByIris
-  };
+  return { irisSet: irisList.filter(ci => irisOK.includes(ci)), securiteByIris };
 }
 
 
