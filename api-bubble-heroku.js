@@ -551,6 +551,56 @@ async function applyLogSoc(irisList, lsCriteria) {
 }
 
 // --------------------------------------------------------------
+// G) Filtrage Sécurité (mode rayon)
+// -------------------------------------------------------------
+async function applySecurite(irisList, secCrit) {
+  if (!irisList.length || !secCrit) {
+    return { irisSet: irisList, securiteByIris: {} };
+  }
+
+  const { min, max } = secCrit;
+  if (min == null && max == null) {
+    return { irisSet: irisList, securiteByIris: {} };
+  }
+
+  let where = ['i.code_iris = ANY($1)'];
+  let vals  = [irisList];
+  let idx   = 2;
+
+  if (min != null) {
+    where.push(`d.note_sur_20 >= $${idx}`);
+    vals.push(min);
+    idx++;
+  }
+  if (max != null) {
+    where.push(`d.note_sur_20 <= $${idx}`);
+    vals.push(max);
+  }
+
+  const sql = `
+    SELECT i.code_iris, d.note_sur_20
+    FROM decoupages.iris_grandeetendue_2022 i
+    JOIN delinquance.notes_insecurite_geom_complet d
+         ON (d.insee_com = i.insee_com OR d.insee_com = i.insee_arm)
+    WHERE ${where.join(' AND ')}
+  `;
+  const r = await pool.query(sql, vals);
+
+  const securiteByIris = {};
+  const irisOK = [];
+  for (const row of r.rows) {
+    securiteByIris[row.code_iris] = [{ note: Number(row.note_sur_20) }];
+    irisOK.push(row.code_iris);
+  }
+
+  return {
+    irisSet: intersectArrays(irisList, irisOK),
+    securiteByIris
+  };
+}
+
+
+// --------------------------------------------------------------
 // H) Critère partiel Ecoles
 // --------------------------------------------------------------
 async function applyEcoles(irisList, ecolesCrit) {
@@ -948,7 +998,7 @@ app.post('/get_iris_filtre', async (req, res) => {
       let  communesFinal = rows.map(r => r.insee_com);
 
       /* --- et on saute directement au bloc de filtres --- */
-      await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria);
+await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, null);
       return;   // plus besoin du code juste après
     }
 
@@ -1010,7 +1060,7 @@ app.post('/get_iris_filtre', async (req, res) => {
     }
 
     /* ✅ On a trouvé des IRIS : on lance maintenant tous les filtres */
-    await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria);
+await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode);
     return;      // on sort, le reste du handler ne s’exécute plus
 
   } catch (err) {
@@ -1023,7 +1073,7 @@ app.post('/get_iris_filtre', async (req, res) => {
 /* ------------------------------------------------------------------
  * HELPER : exécute tous les filtres et renvoie la réponse Bubble
  * ------------------------------------------------------------------ */
-async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria) {
+   async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode = null) {
   /************  1.  PIPELINE DE CRITÈRES  ************/
   if (!arrayIrisLoc.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
@@ -1037,8 +1087,22 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
+    // — Securite —
+  let irisAfterSecu = arrayIrisLoc;
+  let securiteByIris = {};
+  if (mode === 'rayon') {
+    const secuRes = await applySecurite(arrayIrisLoc, criteria?.securite);
+    irisAfterSecu = secuRes.irisSet;
+    securiteByIris = secuRes.securiteByIris;
+
+    if (!irisAfterSecu.length) {
+      console.timeEnd('TOTAL /get_iris_filtre');
+      return res.json({ nb_iris: 0, iris: [], communes: [] });
+    }
+  }
+
   // — Revenus —
-  const { irisSet: irisAfterRevenus, revenusByIris } = await applyRevenus(irisAfterDVF, criteria?.filosofi);
+  const { irisSet: irisAfterRevenus, revenusByIris } = await applyRevenus(irisAfterSecu, criteria?.filosofi);
   if (!irisAfterRevenus.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
@@ -1085,7 +1149,9 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     dvf_count_total: dvfTotalByIris[iris] ?? 0,
     mediane_rev_decl: revenusByIris[iris]?.mediane_rev_decl ?? null,
     part_log_soc: logSocByIris[iris]?.part_log_soc ?? null,
-    securite: securiteByIris[iris]?.[0]?.note ?? null,
+    securite: (securiteByIris[iris] ?? criteria?.securite)
+              ? securiteByIris[iris]?.[0]?.note ?? null
+              : securiteByIris[iris]?.[0]?.note ?? null,
     ecoles: ecolesByIris[iris] ?? [],
     colleges: collegesByIris[iris] ?? [],
     prix_median_m2: prixMedianByIris[iris] ?? null
