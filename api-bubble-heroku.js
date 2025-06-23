@@ -1083,82 +1083,78 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mod
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-  // — DVF —
-  const { irisSet: irisAfterDVF, dvfCountByIris } = await applyDVF(arrayIrisLoc, criteria?.dvf);
-  if (!irisAfterDVF.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
+    let iris = arrayIrisLoc;
+  let securiteFromApply = {};
 
-    // — Securite —
-  let irisAfterSecu = arrayIrisLoc;
-let securiteFromApply = {};
+  // — Sécurité (seulement en mode rayon)
   if (mode === 'rayon') {
-    const secuRes = await applySecurite(arrayIrisLoc, criteria?.securite);
-    irisAfterSecu = secuRes.irisSet;
-    securiteFromApply = secuRes.securiteByIris;
+    const resSecu = await applySecurite(iris, criteria?.securite);
+    iris = resSecu.irisSet;
+    securiteFromApply = resSecu.securiteByIris;
 
-    if (!irisAfterSecu.length) {
+    if (!iris.length) {
       console.timeEnd('TOTAL /get_iris_filtre');
       return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
   }
 
-  // — Revenus —
-  const { irisSet: irisAfterRevenus, revenusByIris } = await applyRevenus(irisAfterSecu, criteria?.filosofi);
-  if (!irisAfterRevenus.length) {
+  // — DVF
+  const { irisSet: afterDVF, dvfCountByIris } = await applyDVF(iris, criteria?.dvf);
+  iris = afterDVF;
+  if (!iris.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-  // — Logements sociaux —
-  const { irisSet: irisAfterSoc, logSocByIris } = await applyLogSoc(irisAfterRevenus, criteria?.filosofi);
-  if (!irisAfterSoc.length) {
+  // — Revenus
+  const { irisSet: afterRevenus, revenusByIris } = await applyRevenus(iris, criteria?.filosofi);
+  iris = afterRevenus;
+  if (!iris.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-  // — Écoles —
-  const { irisSet: irisAfterEco, ecolesByIris } = await applyEcoles(irisAfterSoc, criteria?.ecoles);
-  if (!irisAfterEco.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
+  // — Logements sociaux
+  const { irisSet: afterSoc, logSocByIris } = await applyLogSoc(iris, criteria?.filosofi);
+  iris = afterSoc;
+  if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
 
-  // — Collèges —
-  const { irisSet: irisAfterCols, collegesByIris } = await applyColleges(irisAfterEco, criteria?.colleges);
-  if (!irisAfterCols.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
+  // — Écoles
+  const { irisSet: afterEco, ecolesByIris } = await applyEcoles(iris, criteria?.ecoles);
+  iris = afterEco;
+  if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
 
-  // — Prix médian m² —
-  const { irisSet: irisAfterPrixM2, prixMedianByIris } = await applyPrixMedian(irisAfterCols, criteria?.prixMedianM2);
-  if (!irisAfterPrixM2.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
+  // — Collèges
+  const { irisSet: afterCols, collegesByIris } = await applyColleges(iris, criteria?.colleges);
+  iris = afterCols;
+  if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
+
+  // — Prix médian
+  const { irisSet: afterPrix, prixMedianByIris } = await applyPrixMedian(iris, criteria?.prixMedianM2);
+  iris = afterPrix;
+  if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
 
   // derniers compléments
-  const dvfTotalByIris = await getDVFCountTotal(irisAfterPrixM2);
-  const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(irisAfterPrixM2);
-  const communesData = await groupByCommunes(irisAfterPrixM2, communesFinal);
+const dvfTotalByIris = await getDVFCountTotal(iris);
+const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(iris);
+const communesData = await groupByCommunes(iris, communesFinal);
+
 
   // construction de la réponse finale
-  const irisFinalDetail = irisAfterPrixM2.map(iris => ({
-    code_iris: iris,
-    nom_iris: irisNameByIris[iris] ?? null,
-    dvf_count: dvfCountByIris[iris] ?? 0,
-    dvf_count_total: dvfTotalByIris[iris] ?? 0,
-    mediane_rev_decl: revenusByIris[iris]?.mediane_rev_decl ?? null,
-    part_log_soc: logSocByIris[iris]?.part_log_soc ?? null,
-    securite: (securiteFromApply[iris] ?? criteria?.securite)
-              ? securiteFromApply[iris]?.[0]?.note ?? null
-              : securiteByIris[iris]?.[0]?.note ?? null,
-    ecoles: ecolesByIris[iris] ?? [],
-    colleges: collegesByIris[iris] ?? [],
-    prix_median_m2: prixMedianByIris[iris] ?? null
-  }));
+const irisFinalDetail = iris.map(irisCode => ({
+  code_iris: irisCode,
+  nom_iris: irisNameByIris[irisCode] ?? null,
+  dvf_count: dvfCountByIris[irisCode] ?? 0,
+  dvf_count_total: dvfTotalByIris[irisCode] ?? 0,
+  mediane_rev_decl: revenusByIris[irisCode]?.mediane_rev_decl ?? null,
+  part_log_soc: logSocByIris[irisCode]?.part_log_soc ?? null,
+  securite: (securiteFromApply[irisCode] ?? criteria?.securite)
+            ? securiteFromApply[irisCode]?.[0]?.note ?? null
+            : securiteByIris[irisCode]?.[0]?.note ?? null,
+  ecoles: ecolesByIris[irisCode] ?? [],
+  colleges: collegesByIris[irisCode] ?? [],
+  prix_median_m2: prixMedianByIris[irisCode] ?? null
+}));
 
   console.log('=> final irisAfterSoc.length =', irisAfterSoc.length);
   console.timeEnd('TOTAL /get_iris_filtre');
