@@ -1156,7 +1156,7 @@ securite: securiteFromApply[irisCode]
   prix_median_m2: prixMedianByIris[irisCode] ?? null
 }));
 
-  console.log('=> final irisAfterSoc.length =', irisAfterSoc.length);
+console.log('=> final iris.length =', iris.length);
   console.timeEnd('TOTAL /get_iris_filtre');
   return res.json({
     nb_iris: iris.length,
