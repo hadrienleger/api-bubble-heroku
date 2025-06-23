@@ -1030,16 +1030,18 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-  let iris = arrayIrisLoc;
+  let iris = arrayIrisLoc; // Initialize iris with the localized IRIS codes
   let securiteFromApply = {};
   let dvfCountByIris = {};
   let revenusByIris = {};
   let prixMedianByIris = {};
   let ecolesByIris = {};
   let collegesByIris = {};
+  let logSocByIris = {}; // Make sure this is also initialized
 
   // — Sécurité —
   console.log('🔍 Application du filtre sécurité');
+  // Pass criteria.securite to applySecurite
   const resSecu = await applySecurite(iris, criteria?.securite);
   iris = resSecu.irisSet;
   securiteFromApply = resSecu.securiteByIris;
@@ -1051,6 +1053,7 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
 
   // — Prix médian m2 —
   console.log('🔍 Application du filtre prix median');
+  // Pass criteria.prixMedianM2 to applyPrixMedian
   const resPrix = await applyPrixMedian(iris, criteria?.prixMedianM2);
   iris = resPrix.irisSet;
   prixMedianByIris = resPrix.prixMedianByIris;
@@ -1062,6 +1065,7 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
 
   // — DVF —
   console.log('🔍 Application du filtre DVF');
+  // Pass criteria.dvf to applyDVF
   const resDVF = await applyDVF(iris, criteria?.dvf);
   iris = resDVF.irisSet;
   dvfCountByIris = resDVF.dvfCountByIris;
@@ -1071,8 +1075,9 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-  // — FILOSOFI —
+  // — FILOSOFI (Revenus) —
   console.log('🔍 Application du filtre revenus');
+  // Pass criteria.filosofi to applyRevenus
   const resRev = await applyRevenus(iris, criteria?.filosofi);
   iris = resRev.irisSet;
   revenusByIris = resRev.revenusByIris;
@@ -1084,6 +1089,7 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
 
   // - LOGEMENTS SOCIAUX -
   console.log('🔍 Application du filtre logements sociaux');
+  // Pass criteria.filosofi to applyLogSoc
   const resSoc = await applyLogSoc(iris, criteria?.filosofi);
   iris = resSoc.irisSet;
   logSocByIris = resSoc.logSocByIris;
@@ -1094,6 +1100,7 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
 
   // — ÉCOLES —
   console.log('🔍 Application du filtre écoles');
+  // Pass criteria.ecoles to applyEcoles
   const resEco = await applyEcoles(iris, criteria?.ecoles);
   iris = resEco.irisSet;
   ecolesByIris = resEco.ecolesByIris;
@@ -1105,6 +1112,7 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
 
   // — COLLÈGES —
   console.log('🔍 Application du filtre collèges');
+  // Pass criteria.colleges to applyColleges
   const resCol = await applyColleges(iris, criteria?.colleges);
   iris = resCol.irisSet;
   collegesByIris = resCol.collegesByIris;
@@ -1115,8 +1123,10 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
   }
 
   // ✅ Final response
+  // After all filtering, gather detailed information for the *final* set of IRIS codes.
   const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(iris);
   const dvfTotalByIris = await getDVFCountTotal(iris);
+
 
   const irisFinalDetail = iris.map(code => ({
     code_iris       : code,
@@ -1125,8 +1135,8 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     dvf_count_total : dvfTotalByIris[code] ?? 0,
     mediane_rev_decl: revenusByIris[code]?.mediane_rev_decl ?? null,
     part_log_soc    : logSocByIris[code]?.part_log_soc    ?? null,
-    securite        : securiteFromApply[code]?.[0]?.note
-                      ?? securiteByIris[code]?.[0]?.note  ?? null,
+    // Use securiteFromApply which holds the result of the filtering step
+    securite        : securiteFromApply[code]?.[0]?.note ?? null,
     prix_median_m2  : prixMedianByIris[code]              ?? null,
     ecoles          : ecolesByIris[code]                  ?? [],
     colleges        : collegesByIris[code]                ?? []
