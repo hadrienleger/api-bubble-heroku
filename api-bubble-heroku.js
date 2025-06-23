@@ -1100,13 +1100,13 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-  /* --- Sécurité : NOUVEAU --- */
-  const { irisSet: irisAfterSecu, securiteByIris } =
-          await applySecurite(irisAfterSoc, criteria?.securite);
-  if (!irisAfterSoc.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
+/* --- Sécurité : NOUVEAU --- */
+const { irisSet: irisAfterSecu, securiteByIris } =
+        await applySecurite(irisAfterSoc, criteria?.securite);
+if (!irisAfterSecu.length) {
+  console.timeEnd('TOTAL /get_iris_filtre');
+  return res.json({ nb_iris: 0, iris: [], communes: [] });
+}
 
   // — Écoles —
 const { irisSet: irisAfterEco, ecolesByIris } =
