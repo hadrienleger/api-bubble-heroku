@@ -551,55 +551,6 @@ async function applyLogSoc(irisList, lsCriteria) {
 }
 
 // --------------------------------------------------------------
-// H) Critère Sécurité (dans le cas du mode rayon ; mode collectivités, filtrage préalable hérité)
-// --------------------------------------------------------------
-async function applySecurite (irisList, secCrit) {
-  if (!irisList.length || !secCrit) {
-    return { irisSet: irisList, securiteByIris: {} };
-  }
-  const { min, max } = secCrit;
-  if (min == null && max == null) {
-    return { irisSet: irisList, securiteByIris: {} };
-  }
-
-  // 1. Construire WHERE + valeurs en gardant les index cohérents
-  let where   = ['i.code_iris = ANY($1)'];
-  let vals    = [irisList];
-  let idx     = 2;
-
-  if (min != null) {
-    where.push(`d.note_sur_20 >= $${idx}`);
-    vals.push(min);
-    idx++;
-  }
-  if (max != null) {
-    where.push(`d.note_sur_20 <= $${idx}`);
-    vals.push(max);
-  }
-
-  // 2. Exécuter la requête
-  const sql = `
-    SELECT i.code_iris, d.note_sur_20
-    FROM decoupages.iris_grandeetendue_2022 i
-    JOIN delinquance.notes_insecurite_geom_complet d
-         ON (d.insee_com = i.insee_com OR d.insee_com = i.insee_arm)
-    WHERE ${where.join(' AND ')}
-  `;
-  const r = await pool.query(sql, vals);
-
-  // 3. Préparer la réponse
-  const securiteByIris = {};
-  const irisOK = [];
-  for (const row of r.rows) {
-    securiteByIris[row.code_iris] = [{ note: Number(row.note_sur_20) }];
-    irisOK.push(row.code_iris);
-  }
-
-  return { irisSet: irisList.filter(ci => irisOK.includes(ci)), securiteByIris };
-}
-
-
-// --------------------------------------------------------------
 // H) Critère partiel Ecoles
 // --------------------------------------------------------------
 async function applyEcoles(irisList, ecolesCrit) {
@@ -1100,17 +1051,8 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-/* --- Sécurité : NOUVEAU --- */
-const { irisSet: irisAfterSecu, securiteByIris } =
-        await applySecurite(irisAfterSoc, criteria?.securite);
-if (!irisAfterSecu.length) {
-  console.timeEnd('TOTAL /get_iris_filtre');
-  return res.json({ nb_iris: 0, iris: [], communes: [] });
-}
-
   // — Écoles —
-const { irisSet: irisAfterEco, ecolesByIris } =
-      await applyEcoles(irisAfterSecu, criteria?.ecoles);
+  const { irisSet: irisAfterEco, ecolesByIris } = await applyEcoles(irisAfterSoc, criteria?.ecoles);
   if (!irisAfterEco.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
