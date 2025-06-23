@@ -1044,6 +1044,7 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
   // Pass criteria.securite to applySecurite
   const resSecu = await applySecurite(iris, criteria?.securite);
   iris = resSecu.irisSet;
+  console.log(`✅ IRIS count after securite filter: ${iris.length}`);
   securiteFromApply = resSecu.securiteByIris;
 
   if (!iris.length) {
