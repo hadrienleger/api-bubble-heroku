@@ -1148,9 +1148,9 @@ const irisFinalDetail = iris.map(irisCode => ({
   dvf_count_total: dvfTotalByIris[irisCode] ?? 0,
   mediane_rev_decl: revenusByIris[irisCode]?.mediane_rev_decl ?? null,
   part_log_soc: logSocByIris[irisCode]?.part_log_soc ?? null,
-  securite: (securiteFromApply[irisCode] ?? criteria?.securite)
-            ? securiteFromApply[irisCode]?.[0]?.note ?? null
-            : securiteByIris[irisCode]?.[0]?.note ?? null,
+securite: securiteFromApply[irisCode]
+          ? securiteFromApply[irisCode]?.[0]?.note ?? null
+          : securiteByIris[irisCode]?.[0]?.note ?? null,
   ecoles: ecolesByIris[irisCode] ?? [],
   colleges: collegesByIris[irisCode] ?? [],
   prix_median_m2: prixMedianByIris[irisCode] ?? null
@@ -1159,7 +1159,7 @@ const irisFinalDetail = iris.map(irisCode => ({
   console.log('=> final irisAfterSoc.length =', irisAfterSoc.length);
   console.timeEnd('TOTAL /get_iris_filtre');
   return res.json({
-    nb_iris: irisAfterPrixM2.length,
+    nb_iris: iris.length,
     iris: irisFinalDetail,
     communes: communesData
   });
