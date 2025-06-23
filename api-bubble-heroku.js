@@ -1089,11 +1089,11 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mod
 
     // — Securite —
   let irisAfterSecu = arrayIrisLoc;
-let securiteByIris = {};
+let securiteFromApply = {};
   if (mode === 'rayon') {
     const secuRes = await applySecurite(arrayIrisLoc, criteria?.securite);
     irisAfterSecu = secuRes.irisSet;
-    securiteByIris = secuRes.securiteByIris;
+    securiteFromApply = secuRes.securiteByIris;
 
     if (!irisAfterSecu.length) {
       console.timeEnd('TOTAL /get_iris_filtre');
