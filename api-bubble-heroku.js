@@ -1020,6 +1020,7 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, 'ra
       return res.json({ nb_iris: 0, iris: [], communes: [] });
     }
 
+console.log('📬 _applyAllFiltersAndRespond() CALLED');
     /* ✅ On a trouvé des IRIS : on lance maintenant tous les filtres */
 await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode);
     return;      // on sort, le reste du handler ne s’exécute plus
