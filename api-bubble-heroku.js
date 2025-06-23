@@ -551,6 +551,48 @@ async function applyLogSoc(irisList, lsCriteria) {
 }
 
 // --------------------------------------------------------------
+// H) Critère Sécurité (dans le cas du mode rayon ; mode collectivités, filtrage préalable hérité)
+// --------------------------------------------------------------
+async function applySecurite(irisList, secCrit) {
+  if (!irisList.length || !secCrit) {
+    return { irisSet: irisList, securiteByIris: {} };
+  }
+  const { min, max } = secCrit;
+  if (min == null && max == null) {
+    return { irisSet: irisList, securiteByIris: {} };
+  }
+
+  // On part de la table notes_insecurite_geom_complet (à l'échelle commune)
+  const sql = `
+    SELECT i.code_iris, d.note_sur_20
+    FROM decoupages.iris_grandeetendue_2022 i
+    JOIN delinquance.notes_insecurite_geom_complet d
+         ON (d.insee_com = i.insee_com OR d.insee_com = i.insee_arm)
+    WHERE i.code_iris = ANY($1)
+      ${min != null ? `AND d.note_sur_20 >= $2` : ''}
+      ${max != null ? `AND d.note_sur_20 <= $3` : ''}
+  `;
+  const vals = [irisList];
+  if (min != null) vals.push(min);
+  if (max != null) vals.push(max);
+
+  const r   = await pool.query(sql, vals);
+
+  const securiteByIris = {};
+  const irisOK         = [];
+  for (const row of r.rows) {
+    securiteByIris[row.code_iris] = [{ note: Number(row.note_sur_20) }];
+    irisOK.push(row.code_iris);
+  }
+
+  return {
+    irisSet: irisList.filter(ci => irisOK.includes(ci)),
+    securiteByIris
+  };
+}
+
+
+// --------------------------------------------------------------
 // H) Critère partiel Ecoles
 // --------------------------------------------------------------
 async function applyEcoles(irisList, ecolesCrit) {
@@ -1046,6 +1088,14 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
 
   // — Logements sociaux —
   const { irisSet: irisAfterSoc, logSocByIris } = await applyLogSoc(irisAfterRevenus, criteria?.filosofi);
+  if (!irisAfterSoc.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  /* --- Sécurité : NOUVEAU --- */
+  const { irisSet: irisAfterSecu, securiteByIris } =
+          await applySecurite(irisAfterSoc, criteria?.securite);
   if (!irisAfterSoc.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
