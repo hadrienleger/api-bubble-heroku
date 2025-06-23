@@ -1109,7 +1109,8 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
   }
 
   // — Écoles —
-  const { irisSet: irisAfterEco, ecolesByIris } = await applyEcoles(irisAfterSoc, criteria?.ecoles);
+const { irisSet: irisAfterEco, ecolesByIris } =
+      await applyEcoles(irisAfterSecu, criteria?.ecoles);
   if (!irisAfterEco.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
