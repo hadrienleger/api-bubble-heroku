@@ -518,79 +518,42 @@ async function applyLogSoc(irisList, lsCriteria) {
 // G) Filtrage Sécurité (mode rayon) - VERSION DEBUG
 // -------------------------------------------------------------
 async function applySecurite(irisList, secCrit) {
-  console.log('DEBUG applySecurite - INPUT:', {
-    irisListLength: irisList?.length || 0,
-    secCrit: secCrit
-  });
-
-  if (!irisList.length || !secCrit) {
-    console.log('DEBUG applySecurite - Pas de critères ou liste vide, retour sans filtrage');
+  if (!irisList.length || !secCrit) {        // rien à filtrer
     return { irisSet: irisList, securiteByIris: {} };
   }
 
   const { min, max } = secCrit;
-  if (min == null && max == null) {
-    console.log('DEBUG applySecurite - Min et max null, retour sans filtrage');
+  if (min == null && max == null) {          // bornes vides => pas de filtre
     return { irisSet: irisList, securiteByIris: {} };
   }
 
-  let where = ['i.code_iris = ANY($1)'];
-  let vals  = [irisList];
-  let idx   = 2;
-
-  if (min != null) {
-    where.push(`d.note_sur_20 >= $${idx}`);
-    vals.push(min);
-    idx++;
-    console.log('DEBUG applySecurite - Ajout critère min:', min);
-  }
-  if (max != null) {
-    where.push(`d.note_sur_20 <= $${idx}`);
-    vals.push(max);
-    console.log('DEBUG applySecurite - Ajout critère max:', max);
-  }
-
+  /*  ▸  On garde tous les IRIS dont la note est
+      - ≥ min  (si min renseigné)
+      - ≤ max  (si max renseigné)
+      - ou NULL (=> la note “passe”, comme les autres critères)                     */
   const sql = `
-    SELECT i.code_iris, d.note_sur_20
+    SELECT i.code_iris,
+           d.note_sur_20
     FROM decoupages.iris_grandeetendue_2022 i
-    JOIN decoupages.communes c
-         ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
-    JOIN delinquance.notes_insecurite_geom_complet d
-         ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
-    WHERE ${where.join(' AND ')}
+    LEFT JOIN decoupages.communes c
+           ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+    LEFT JOIN delinquance.notes_insecurite_geom_complet d
+           ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
+    WHERE i.code_iris = ANY($1)
+      AND ( $2::numeric IS NULL OR d.note_sur_20 IS NULL OR d.note_sur_20 >= $2 )
+      AND ( $3::numeric IS NULL OR d.note_sur_20 IS NULL OR d.note_sur_20 <= $3 )
   `;
-  
-  console.log('DEBUG applySecurite - SQL:', sql);
-  console.log('DEBUG applySecurite - Params:', vals);
-  
-  const r = await pool.query(sql, vals);
-  
-  console.log('DEBUG applySecurite - Résultats query:', {
-    rowCount: r.rowCount,
-    firstRows: r.rows.slice(0, 3) // Affiche les 3 premiers résultats
-  });
+  const { rows } = await pool.query(sql, [irisList, min, max]);
 
   const securiteByIris = {};
   const irisOK = [];
-  for (const row of r.rows) {
-    securiteByIris[row.code_iris] = [{ note: Number(row.note_sur_20) }];
-    irisOK.push(row.code_iris);
+  for (const r of rows) {
+    securiteByIris[r.code_iris] = [{ note: r.note_sur_20 !== null ? Number(r.note_sur_20) : null }];
+    irisOK.push(r.code_iris);
   }
-
-  const finalIrisSet = intersectArrays(irisList, irisOK);
-  
-  console.log('DEBUG applySecurite - OUTPUT:', {
-    inputLength: irisList.length,
-    foundLength: irisOK.length,
-    finalLength: finalIrisSet.length,
-    sampleFinalIris: finalIrisSet.slice(0, 5) // 5 premiers IRIS finaux
-  });
-
-  return {
-    irisSet: finalIrisSet,
-    securiteByIris
-  };
+  return { irisSet: irisOK, securiteByIris };
 }
+
 
 
 // --------------------------------------------------------------
@@ -1114,6 +1077,16 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
   iris = resRev.irisSet;
   revenusByIris = resRev.revenusByIris;
 
+  if (!iris.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  // - LOGEMENTS SOCIAUX -
+  console.log('🔍 Application du filtre logements sociaux');
+  const resSoc = await applyLogSoc(iris, criteria?.filosofi);
+  iris = resSoc.irisSet;
+  logSocByIris = resSoc.logSocByIris;
   if (!iris.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
