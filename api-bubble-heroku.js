@@ -190,7 +190,7 @@ async function gatherCommuneCodes(selectedLocalities) {
 // --------------------------------------------------------------
 // D) getIrisLocalisationAndSecurite
 // --------------------------------------------------------------
-async function getIrisLocalisationAndSecurite(params, securite) {
+async function getIrisLocalisationAndSecurite(params) {
   console.time('A) localiser communes');
 
   if (!params.selected_localities || !Array.isArray(params.selected_localities)) {
@@ -206,45 +206,6 @@ async function getIrisLocalisationAndSecurite(params, securite) {
   }
 
   let communesFinal = communesSelection;
-  if (securite) {
-    let whereClauses = [`insee_com = ANY($1)`];
-    let vals = [communesFinal];
-    let idx = 2;
-
-    if (securite.min != null) {
-      whereClauses.push(`note_sur_20 >= $${idx}`);
-      vals.push(securite.min);
-      idx++;
-    }
-    if (securite.max != null) {
-      whereClauses.push(`note_sur_20 <= $${idx}`);
-      vals.push(securite.max);
-      idx++;
-    }
-
-    if (whereClauses.length > 1) {
-      console.time('B) securite query');
-      const qSecu = `
-        SELECT insee_com
-        FROM delinquance.notes_insecurite_geom_complet
-        WHERE ${whereClauses.join(' AND ')}
-      `;
-      let resSecu = await pool.query(qSecu, vals);
-      console.timeEnd('B) securite query');
-
-      let communesSecuOk = resSecu.rows.map(r => r.insee_com);
-      console.log('=> communesSecuOk.length =', communesSecuOk.length);
-
-      console.time('B) intersection communes securite');
-      communesFinal = intersectArrays(communesFinal, communesSecuOk);
-      console.timeEnd('B) intersection communes securite');
-      console.log('=> communesFinal (after securite) =', communesFinal.length);
-
-      if (!communesFinal.length) {
-        return { arrayIrisLoc: [], communesFinal: [] };
-      }
-    }
-  }
 
   console.time('C) iris_grandeetendue_2022 query');
   const qIris = `
@@ -1017,10 +978,7 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, 'ra
         }))
       };
 
-      const r = await getIrisLocalisationAndSecurite(
-                  fakeParams,
-                  criteria?.securite          // le critère sécurité, s’il existe déjà
-                );
+      const r = await getIrisLocalisationAndSecurite(fakeParams);
 
       arrayIrisLoc  = r.arrayIrisLoc;
       communesFinal = r.communesFinal;
@@ -1086,17 +1044,16 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mod
     let iris = arrayIrisLoc;
   let securiteFromApply = {};
 
-  // — Sécurité (seulement en mode rayon)
-  if (mode === 'rayon') {
-    const resSecu = await applySecurite(iris, criteria?.securite);
-    iris = resSecu.irisSet;
-    securiteFromApply = resSecu.securiteByIris;
+// — Sécurité (s’applique dans tous les cas maintenant)
+const resSecu = await applySecurite(iris, criteria?.securite);
+iris = resSecu.irisSet;
+securiteFromApply = resSecu.securiteByIris;
 
-    if (!iris.length) {
-      console.timeEnd('TOTAL /get_iris_filtre');
-      return res.json({ nb_iris: 0, iris: [], communes: [] });
-    }
-  }
+if (!iris.length) {
+  console.timeEnd('TOTAL /get_iris_filtre');
+  return res.json({ nb_iris: 0, iris: [], communes: [] });
+}
+
 
   // — DVF
   const { irisSet: afterDVF, dvfCountByIris } = await applyDVF(iris, criteria?.dvf);
