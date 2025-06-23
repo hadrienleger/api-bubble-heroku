@@ -514,13 +514,23 @@ async function applyLogSoc(irisList, lsCriteria) {
 // --------------------------------------------------------------
 // G) Filtrage Sécurité (mode rayon)
 // -------------------------------------------------------------
+// --------------------------------------------------------------
+// G) Filtrage Sécurité (mode rayon) - VERSION DEBUG
+// -------------------------------------------------------------
 async function applySecurite(irisList, secCrit) {
+  console.log('DEBUG applySecurite - INPUT:', {
+    irisListLength: irisList?.length || 0,
+    secCrit: secCrit
+  });
+
   if (!irisList.length || !secCrit) {
+    console.log('DEBUG applySecurite - Pas de critères ou liste vide, retour sans filtrage');
     return { irisSet: irisList, securiteByIris: {} };
   }
 
   const { min, max } = secCrit;
   if (min == null && max == null) {
+    console.log('DEBUG applySecurite - Min et max null, retour sans filtrage');
     return { irisSet: irisList, securiteByIris: {} };
   }
 
@@ -532,23 +542,33 @@ async function applySecurite(irisList, secCrit) {
     where.push(`d.note_sur_20 >= $${idx}`);
     vals.push(min);
     idx++;
+    console.log('DEBUG applySecurite - Ajout critère min:', min);
   }
   if (max != null) {
     where.push(`d.note_sur_20 <= $${idx}`);
     vals.push(max);
+    console.log('DEBUG applySecurite - Ajout critère max:', max);
   }
 
   const sql = `
     SELECT i.code_iris, d.note_sur_20
     FROM decoupages.iris_grandeetendue_2022 i
-JOIN decoupages.communes c
-     ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
-JOIN delinquance.notes_insecurite_geom_complet d
-     ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
-
+    JOIN decoupages.communes c
+         ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+    JOIN delinquance.notes_insecurite_geom_complet d
+         ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
     WHERE ${where.join(' AND ')}
   `;
+  
+  console.log('DEBUG applySecurite - SQL:', sql);
+  console.log('DEBUG applySecurite - Params:', vals);
+  
   const r = await pool.query(sql, vals);
+  
+  console.log('DEBUG applySecurite - Résultats query:', {
+    rowCount: r.rowCount,
+    firstRows: r.rows.slice(0, 3) // Affiche les 3 premiers résultats
+  });
 
   const securiteByIris = {};
   const irisOK = [];
@@ -557,8 +577,17 @@ JOIN delinquance.notes_insecurite_geom_complet d
     irisOK.push(row.code_iris);
   }
 
+  const finalIrisSet = intersectArrays(irisList, irisOK);
+  
+  console.log('DEBUG applySecurite - OUTPUT:', {
+    inputLength: irisList.length,
+    foundLength: irisOK.length,
+    finalLength: finalIrisSet.length,
+    sampleFinalIris: finalIrisSet.slice(0, 5) // 5 premiers IRIS finaux
+  });
+
   return {
-    irisSet: intersectArrays(irisList, irisOK),
+    irisSet: finalIrisSet,
     securiteByIris
   };
 }
@@ -1032,102 +1061,102 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mod
   }
 });
 
-/* ------------------------------------------------------------------
- * HELPER : exécute tous les filtres et renvoie la réponse Bubble
- * ------------------------------------------------------------------ */
-   async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode = null) {
-  /************  1.  PIPELINE DE CRITÈRES  ************/
+async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode = null) {
   if (!arrayIrisLoc.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-    let iris = arrayIrisLoc;
+  let iris = arrayIrisLoc;
   let securiteFromApply = {};
+  let dvfCountByIris = {};
+  let revenusByIris = {};
+  let prixMedianByIris = {};
+  let ecolesByIris = {};
+  let collegesByIris = {};
 
-console.log('🔍 Application du filtre sécurité');
-// — Sécurité (s’applique dans tous les cas maintenant)
-const resSecu = await applySecurite(iris, criteria?.securite);
-iris = resSecu.irisSet;
-securiteFromApply = resSecu.securiteByIris;
+  // — Sécurité —
+  console.log('🔍 Application du filtre sécurité');
+  const resSecu = await applySecurite(iris, criteria?.securite);
+  iris = resSecu.irisSet;
+  securiteFromApply = resSecu.securiteByIris;
 
-if (!iris.length) {
-  console.timeEnd('TOTAL /get_iris_filtre');
-  return res.json({ nb_iris: 0, iris: [], communes: [] });
-}
-
-
-  // — DVF
-  const { irisSet: afterDVF, dvfCountByIris } = await applyDVF(iris, criteria?.dvf);
-  iris = afterDVF;
   if (!iris.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-console.log('🔍 Application du filtre revenus');
-  // — Revenus
-  const { irisSet: afterRevenus, revenusByIris } = await applyRevenus(iris, criteria?.filosofi);
-  iris = afterRevenus;
+  // — Prix médian m2 —
+  console.log('🔍 Application du filtre prix median');
+  const resPrix = await applyPrixMedian(iris, criteria?.prixMedianM2);
+  iris = resPrix.irisSet;
+  prixMedianByIris = resPrix.prixMedianByIris;
+
   if (!iris.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
-console.log('🔍 Application du filtre log soc');
-  // — Logements sociaux
-  const { irisSet: afterSoc, logSocByIris } = await applyLogSoc(iris, criteria?.filosofi);
-  iris = afterSoc;
-  if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
+  // — DVF —
+  console.log('🔍 Application du filtre DVF');
+  const resDVF = await applyDVF(iris, criteria?.dvf);
+  iris = resDVF.irisSet;
+  dvfCountByIris = resDVF.dvfCountByIris;
 
-console.log('🔍 Application du filtre écoles');
-  // — Écoles
-  const { irisSet: afterEco, ecolesByIris } = await applyEcoles(iris, criteria?.ecoles);
-  iris = afterEco;
-  if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
+  if (!iris.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
 
-console.log('🔍 Application du filtre collèges');
-  // — Collèges
-  const { irisSet: afterCols, collegesByIris } = await applyColleges(iris, criteria?.colleges);
-  iris = afterCols;
-  if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
+  // — FILOSOFI —
+  console.log('🔍 Application du filtre revenus');
+  const resRev = await applyRevenus(iris, criteria?.filosofi);
+  iris = resRev.irisSet;
+  revenusByIris = resRev.revenusByIris;
 
-console.log('🔍 Application du filtre prix median');
-  // — Prix médian
-  const { irisSet: afterPrix, prixMedianByIris } = await applyPrixMedian(iris, criteria?.prixMedianM2);
-  iris = afterPrix;
-  if (!iris.length) return res.json({ nb_iris: 0, iris: [], communes: [] });
+  if (!iris.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
 
-  // derniers compléments
-const dvfTotalByIris = await getDVFCountTotal(iris);
-const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(iris);
-const communesData = await groupByCommunes(iris, communesFinal);
+  // — ÉCOLES —
+  console.log('🔍 Application du filtre écoles');
+  const resEco = await applyEcoles(iris, criteria?.ecoles);
+  iris = resEco.irisSet;
+  ecolesByIris = resEco.ecolesByIris;
 
+  if (!iris.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
 
-  // construction de la réponse finale
-const irisFinalDetail = iris.map(irisCode => ({
-  code_iris: irisCode,
-  nom_iris: irisNameByIris[irisCode] ?? null,
-  dvf_count: dvfCountByIris[irisCode] ?? 0,
-  dvf_count_total: dvfTotalByIris[irisCode] ?? 0,
-  mediane_rev_decl: revenusByIris[irisCode]?.mediane_rev_decl ?? null,
-  part_log_soc: logSocByIris[irisCode]?.part_log_soc ?? null,
-securite: securiteFromApply[irisCode]
-          ? securiteFromApply[irisCode]?.[0]?.note ?? null
-          : securiteByIris[irisCode]?.[0]?.note ?? null,
-  ecoles: ecolesByIris[irisCode] ?? [],
-  colleges: collegesByIris[irisCode] ?? [],
-  prix_median_m2: prixMedianByIris[irisCode] ?? null
-}));
+  // — COLLÈGES —
+  console.log('🔍 Application du filtre collèges');
+  const resCol = await applyColleges(iris, criteria?.colleges);
+  iris = resCol.irisSet;
+  collegesByIris = resCol.collegesByIris;
 
-console.log('=> final iris.length =', iris.length);
-  console.timeEnd('TOTAL /get_iris_filtre');
+  if (!iris.length) {
+    console.timeEnd('TOTAL /get_iris_filtre');
+    return res.json({ nb_iris: 0, iris: [], communes: [] });
+  }
+
+  // ✅ Final response
+  console.log('✅ Tous les filtres appliqués →', iris.length, 'IRIS');
+
   return res.json({
     nb_iris: iris.length,
-    iris: irisFinalDetail,
-    communes: communesData
+    iris,
+    communes: communesFinal,
+    securite: securiteFromApply,
+    prixMedianM2: prixMedianByIris,
+    dvf: dvfCountByIris,
+    revenus: revenusByIris,
+    ecoles: ecolesByIris,
+    colleges: collegesByIris
   });
 }
+
 
 // ------------------------------------------------------------------
 // NOUVEAU ENDPOINT : GET /iris_by_point?lat=...&lon=...
