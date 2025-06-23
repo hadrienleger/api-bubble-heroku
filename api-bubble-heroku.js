@@ -998,7 +998,7 @@ app.post('/get_iris_filtre', async (req, res) => {
       let  communesFinal = rows.map(r => r.insee_com);
 
       /* --- et on saute directement au bloc de filtres --- */
-await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, null);
+await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode);
       return;   // plus besoin du code juste après
     }
 
@@ -1090,7 +1090,7 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mod
     // — Securite —
   let irisAfterSecu = arrayIrisLoc;
 let securiteFromApply = {};
-  if (mode === 'rayon') {
+  if (criteria?.securite && mode !== 'collectivites') {
     const secuRes = await applySecurite(arrayIrisLoc, criteria?.securite);
     irisAfterSecu = secuRes.irisSet;
     securiteFromApply = secuRes.securiteByIris;
