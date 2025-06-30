@@ -188,41 +188,6 @@ async function gatherCommuneCodes(selectedLocalities) {
 }
 
 // --------------------------------------------------------------
-// D) getIrisLocalisationAndSecurite
-// --------------------------------------------------------------
-async function getIrisLocalisationAndSecurite(params) {
-  console.time('A) localiser communes');
-
-  if (!params.selected_localities || !Array.isArray(params.selected_localities)) {
-    throw new Error('Paramètre "selected_localities" manquant ou invalide (doit être un array).');
-  }
-
-  let communesSelection = await gatherCommuneCodes(params.selected_localities);
-  console.log('=> communesSelection.length =', communesSelection.length);
-  console.timeEnd('A) localiser communes');
-
-  if (!communesSelection.length) {
-    return { arrayIrisLoc: [], communesFinal: [] };
-  }
-
-  let communesFinal = communesSelection;
-
-  console.time('C) iris_grandeetendue_2022 query');
-  const qIris = `
-    SELECT code_iris
-    FROM decoupages.iris_grandeetendue_2022
-    WHERE insee_com = ANY($1)
-  `;
-  let rIris = await pool.query(qIris, [communesFinal]);
-  console.timeEnd('C) iris_grandeetendue_2022 query');
-
-  let arrayIrisLoc = rIris.rows.map(rr => rr.code_iris);
-  console.log('=> arrayIrisLoc.length =', arrayIrisLoc.length);
-
-  return { arrayIrisLoc, communesFinal };
-}
-
-// --------------------------------------------------------------
 // D) Filtrage DVF
 // --------------------------------------------------------------
 async function getDVFCountTotal(irisList) {
