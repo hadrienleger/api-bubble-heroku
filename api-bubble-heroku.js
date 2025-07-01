@@ -229,7 +229,7 @@ if (!communesSelection.length) {
            ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
     LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
            ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
-    WHERE c.insee_com = ANY($1)
+    WHERE (c.insee_com = ANY($1) OR c.insee_arm = ANY($1))
   `;
   const { rows } = await pool.query(sql, [communesSelection]);
 
