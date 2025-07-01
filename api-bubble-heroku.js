@@ -230,6 +230,7 @@ if (!communesSelection.length) {
     LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
            ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
     WHERE (c.insee_com = ANY($1) OR c.insee_arm = ANY($1))
+    AND cr.annee = 2022
   `;
   const { rows } = await pool.query(sql, [communesSelection]);
 
@@ -853,6 +854,7 @@ async function applyCreches(irisList, crechesCrit) {
     LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
            ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
     WHERE i.code_iris = ANY($1)
+      AND cr.annee = 2022
       AND ($2::numeric IS NULL OR cr.txcouv_eaje_com IS NULL OR cr.txcouv_eaje_com >= $2)
       AND ($3::numeric IS NULL OR cr.txcouv_eaje_com IS NULL OR cr.txcouv_eaje_com <= $3)
   `;
