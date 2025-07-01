@@ -201,7 +201,7 @@ async function getIrisLocalisationAndSecurite(params, criteriaCommune = {}) {
   if (!params.selected_localities || !Array.isArray(params.selected_localities)) {
     throw new Error('Paramètre "selected_localities" manquant ou invalide (doit être un array).');
   }
-  let communesSelection = await gatherCommuneCodes(params.selected_localities);
+let communesSelection = params.selected_localities || params.codes_insee || [];
   if (!communesSelection.length) {
     return { arrayIrisLoc: [], communesFinal: [] };
   }
