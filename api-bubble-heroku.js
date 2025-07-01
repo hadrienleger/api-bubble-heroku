@@ -190,67 +190,87 @@ async function gatherCommuneCodes(selectedLocalities) {
 // --------------------------------------------------------------
 // D) getIrisLocalisationAndSecurite
 // --------------------------------------------------------------
+// --------------------------------------------------------------
+// D) getIrisLocalisationAndSecurite  (version avec pré-filtre)
+// --------------------------------------------------------------
 async function getIrisLocalisationAndSecurite(params, criteriaCommune = {}) {
-  const { codes_insee } = params;
+  console.time('A) localiser + pré-filtrer communes');
 
-  // Récupérer les communes valides
+  /* 1. Récupère la liste brute de codes INSEE à partir
+        des collectivités sélectionnées (communes, départements, etc.) */
+  if (!params.selected_localities || !Array.isArray(params.selected_localities)) {
+    throw new Error('Paramètre "selected_localities" manquant ou invalide (doit être un array).');
+  }
+  let communesSelection = await gatherCommuneCodes(params.selected_localities);
+  if (!communesSelection.length) {
+    return { arrayIrisLoc: [], communesFinal: [] };
+  }
+
+  /* 2. Chargement des indicateurs Sécurité + Crèches pour ces communes */
   const sql = `
-    SELECT insee_com,
-           COALESCE(NULLIF(insee_arm, ''), insee_com) AS insee_target,
-           note_sur_20,
-           log_sociaux_pourc,
-           revenu_median,
+    SELECT c.insee_com,
+           COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_target,
+           d.note_sur_20,
            cr.txcouv_eaje_com
     FROM decoupages.communes c
-    LEFT JOIN indicateurs.securite_communes s
-      ON s.insee = c.insee_com
-    LEFT JOIN indicateurs.filosofi_communes f
-      ON f.insee = c.insee_com
+    LEFT JOIN delinquance.notes_insecurite_geom_complet d
+           ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
     LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
-      ON cr.numcom = c.insee_com
+           ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
+    WHERE c.insee_com = ANY($1)
   `;
+  const { rows } = await pool.query(sql, [communesSelection]);
 
-  const { rows } = await pool.query(sql);
-  let communes = rows;
+  /* 3. Applique les bornes de filtre (sécurité + crèches).
+        Si la commune n’a pas de donnée (NULL), on la garde. */
+  let communesFiltrees = rows;
 
-  // Appliquer les filtres commune (si présents)
+  // --- critère Sécurité ---
   if (criteriaCommune?.securite?.min != null) {
-    communes = communes.filter(
-      r => r.note_sur_20 == null || r.note_sur_20 >= criteriaCommune.securite.min
+    communesFiltrees = communesFiltrees.filter(r =>
+      r.note_sur_20 == null || r.note_sur_20 >= criteriaCommune.securite.min
     );
   }
   if (criteriaCommune?.securite?.max != null) {
-    communes = communes.filter(
-      r => r.note_sur_20 == null || r.note_sur_20 <= criteriaCommune.securite.max
+    communesFiltrees = communesFiltrees.filter(r =>
+      r.note_sur_20 == null || r.note_sur_20 <= criteriaCommune.securite.max
     );
   }
 
+  // --- critère Crèches ---
   if (criteriaCommune?.creches?.min != null) {
-    communes = communes.filter(
-      r => r.txcouv_eaje_com == null || r.txcouv_eaje_com >= criteriaCommune.creches.min
+    communesFiltrees = communesFiltrees.filter(r =>
+      r.txcouv_eaje_com == null || r.txcouv_eaje_com >= criteriaCommune.creches.min
     );
   }
   if (criteriaCommune?.creches?.max != null) {
-    communes = communes.filter(
-      r => r.txcouv_eaje_com == null || r.txcouv_eaje_com <= criteriaCommune.creches.max
+    communesFiltrees = communesFiltrees.filter(r =>
+      r.txcouv_eaje_com == null || r.txcouv_eaje_com <= criteriaCommune.creches.max
     );
   }
 
-  const codesTarget = communes.map(r => r.insee_target);
+  /* 4. On garde la clé cible (arrondissement si présent) */
+  const codesFinal = communesFiltrees.map(r => r.insee_target);
+  if (!codesFinal.length) {
+    console.timeEnd('A) localiser + pré-filtrer communes');
+    return { arrayIrisLoc: [], communesFinal: [] };
+  }
 
-  // Récupérer tous les IRIS correspondant à ces communes filtrées
-  const sql2 = `
-    SELECT code_iris, nom_com, insee_com
+  /* 5. Tous les IRIS appartenant à ces communes */
+  const sqlIris = `
+    SELECT code_iris
     FROM decoupages.iris_grandeetendue_2022
     WHERE insee_com = ANY($1)
   `;
-  const { rows: iris } = await pool.query(sql2, [codesTarget]);
+  const { rows: irisRows } = await pool.query(sqlIris, [codesFinal]);
 
+  console.timeEnd('A) localiser + pré-filtrer communes');
   return {
-    arrayIrisLoc: iris.map(r => r.code_iris),
-    communesFinal: codesTarget,
+    arrayIrisLoc : irisRows.map(r => r.code_iris),
+    communesFinal: codesFinal
   };
 }
+
 
 // --------------------------------------------------------------
 // D) Filtrage DVF
