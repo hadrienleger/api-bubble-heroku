@@ -196,15 +196,27 @@ async function gatherCommuneCodes(selectedLocalities) {
 async function getIrisLocalisationAndSecurite(params, criteriaCommune = {}) {
   console.time('A) localiser + pré-filtrer communes');
 
-  /* 1. Récupère la liste brute de codes INSEE à partir
-        des collectivités sélectionnées (communes, départements, etc.) */
-  if (!params.selected_localities || !Array.isArray(params.selected_localities)) {
-    throw new Error('Paramètre "selected_localities" manquant ou invalide (doit être un array).');
-  }
-let communesSelection = params.selected_localities || params.codes_insee || [];
-  if (!communesSelection.length) {
-    return { arrayIrisLoc: [], communesFinal: [] };
-  }
+/* 1. Constituer la liste des codes INSEE de communes */
+let communesSelection = [];
+
+// a) cas « collectivites » (tableau d’objets)
+if (Array.isArray(params.selected_localities) &&
+    params.selected_localities.length) {
+  // transforme les objets → array de strings grâce à ta fonction utilitaire
+  communesSelection = await gatherCommuneCodes(params.selected_localities);
+
+// b) cas « codes_insee » (tableau déjà de strings)
+} else if (Array.isArray(params.codes_insee) &&
+           params.codes_insee.length) {
+  communesSelection = params.codes_insee;
+}
+
+// ► Si toujours vide : on sort
+if (!communesSelection.length) {
+  console.timeEnd('A) localiser + pré-filtrer communes');
+  return { arrayIrisLoc: [], communesFinal: [] };
+}
+
 
   /* 2. Chargement des indicateurs Sécurité + Crèches pour ces communes */
   const sql = `
@@ -1241,7 +1253,8 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     securite        : securiteFromApply[code]?.[0]?.note ?? null,
     prix_median_m2  : prixMedianByIris[code]              ?? null,
     ecoles          : ecolesByIris[code]                  ?? [],
-    colleges        : collegesByIris[code]                ?? []
+    colleges        : collegesByIris[code]                ?? [],
+    taux_creches    : crechesByIris[code]                 ?? null
   }));
 
   console.log('✅ Tous les filtres appliqués →', irisFinalDetail.length, 'IRIS');
