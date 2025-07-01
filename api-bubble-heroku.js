@@ -188,6 +188,71 @@ async function gatherCommuneCodes(selectedLocalities) {
 }
 
 // --------------------------------------------------------------
+// D) getIrisLocalisationAndSecurite
+// --------------------------------------------------------------
+async function getIrisLocalisationAndSecurite(params, criteriaCommune = {}) {
+  const { codes_insee } = params;
+
+  // Récupérer les communes valides
+  const sql = `
+    SELECT insee_com,
+           COALESCE(NULLIF(insee_arm, ''), insee_com) AS insee_target,
+           note_sur_20,
+           log_sociaux_pourc,
+           revenu_median,
+           cr.txcouv_eaje_com
+    FROM decoupages.communes c
+    LEFT JOIN indicateurs.securite_communes s
+      ON s.insee = c.insee_com
+    LEFT JOIN indicateurs.filosofi_communes f
+      ON f.insee = c.insee_com
+    LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
+      ON cr.numcom = c.insee_com
+  `;
+
+  const { rows } = await pool.query(sql);
+  let communes = rows;
+
+  // Appliquer les filtres commune (si présents)
+  if (criteriaCommune?.securite?.min != null) {
+    communes = communes.filter(
+      r => r.note_sur_20 == null || r.note_sur_20 >= criteriaCommune.securite.min
+    );
+  }
+  if (criteriaCommune?.securite?.max != null) {
+    communes = communes.filter(
+      r => r.note_sur_20 == null || r.note_sur_20 <= criteriaCommune.securite.max
+    );
+  }
+
+  if (criteriaCommune?.creches?.min != null) {
+    communes = communes.filter(
+      r => r.txcouv_eaje_com == null || r.txcouv_eaje_com >= criteriaCommune.creches.min
+    );
+  }
+  if (criteriaCommune?.creches?.max != null) {
+    communes = communes.filter(
+      r => r.txcouv_eaje_com == null || r.txcouv_eaje_com <= criteriaCommune.creches.max
+    );
+  }
+
+  const codesTarget = communes.map(r => r.insee_target);
+
+  // Récupérer tous les IRIS correspondant à ces communes filtrées
+  const sql2 = `
+    SELECT code_iris, nom_com, insee_com
+    FROM decoupages.iris_grandeetendue_2022
+    WHERE insee_com = ANY($1)
+  `;
+  const { rows: iris } = await pool.query(sql2, [codesTarget]);
+
+  return {
+    arrayIrisLoc: iris.map(r => r.code_iris),
+    communesFinal: codesTarget,
+  };
+}
+
+// --------------------------------------------------------------
 // D) Filtrage DVF
 // --------------------------------------------------------------
 async function getDVFCountTotal(irisList) {
@@ -477,9 +542,6 @@ async function applyLogSoc(irisList, lsCriteria) {
 }
 
 // --------------------------------------------------------------
-// G) Filtrage Sécurité (mode rayon)
-// -------------------------------------------------------------
-// --------------------------------------------------------------
 // G) Filtrage Sécurité (mode rayon) - VERSION DEBUG
 // -------------------------------------------------------------
 async function applySecurite(irisList, secCrit) {
@@ -518,8 +580,6 @@ async function applySecurite(irisList, secCrit) {
   }
   return { irisSet: irisOK, securiteByIris };
 }
-
-
 
 // --------------------------------------------------------------
 // H) Critère partiel Ecoles
@@ -735,7 +795,55 @@ async function applyColleges(irisList, colCrit) {
 }
 
 // --------------------------------------------------------------
-// J) gatherSecuByIris
+// J) Filtrage des crèches
+// --------------------------------------------------------------
+function isCrechesActivated(cr) {
+  if (!cr) return false;
+  return cr.min != null || cr.max != null;
+}
+
+async function applyCreches(irisList, crechesCrit) {
+  if (!irisList.length) {
+    return { irisSet: [], crechesByIris: {} };
+  }
+  if (!isCrechesActivated(crechesCrit)) {
+    return { irisSet: irisList, crechesByIris: {} };
+  }
+
+  const { min, max } = crechesCrit;
+
+  const sql = `
+    SELECT i.code_iris,
+           cr.txcouv_eaje_com
+    FROM decoupages.iris_grandeetendue_2022 i
+    LEFT JOIN decoupages.communes c
+           ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+    LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
+           ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
+    WHERE i.code_iris = ANY($1)
+      AND ($2::numeric IS NULL OR cr.txcouv_eaje_com IS NULL OR cr.txcouv_eaje_com >= $2)
+      AND ($3::numeric IS NULL OR cr.txcouv_eaje_com IS NULL OR cr.txcouv_eaje_com <= $3)
+  `;
+
+  const { rows } = await pool.query(sql, [irisList, min, max]);
+
+  const crechesByIris = {};
+  const irisOK = [];
+
+  for (const r of rows) {
+    crechesByIris[r.code_iris] = r.txcouv_eaje_com != null ? Number(r.txcouv_eaje_com) : null;
+    irisOK.push(r.code_iris);
+  }
+
+  return {
+    irisSet: intersectArrays(irisList, irisOK),
+    crechesByIris,
+  };
+}
+
+
+// --------------------------------------------------------------
+// K) gatherSecuByIris
 // --------------------------------------------------------------
 async function gatherSecuriteByIris(irisList) {
   if (!irisList.length) {
@@ -769,7 +877,7 @@ async function gatherSecuriteByIris(irisList) {
 }
 
 // --------------------------------------------------------------
-// K) groupByCommunes
+// L) groupByCommunes
 // --------------------------------------------------------------
 async function groupByCommunes(irisList, communesFinal) {
   if (!irisList.length || !communesFinal.length) {
@@ -880,7 +988,8 @@ async function buildIrisDetail(irisCodes) {
       securite         : securiteByIris[iris]?.[0]?.note      ?? null,
       ecoles           : ecolesByIris[iris]                   ?? [],
       colleges         : collegesByIris[iris]                 ?? [],
-      prix_median_m2   : prixMedianByIris[iris]               ?? null
+      prix_median_m2   : prixMedianByIris[iris]               ?? null,
+      taux_creches: crechesByIris[code] ?? null
     });
   }
 
@@ -935,7 +1044,7 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, 'ra
         }))
       };
 
-      const r = await getIrisLocalisationAndSecurite(fakeParams);
+      const r = await getIrisLocalisationAndSecurite(fakeParams, criteria);
 
       arrayIrisLoc  = r.arrayIrisLoc;
       communesFinal = r.communesFinal;
@@ -1003,6 +1112,7 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
   let ecolesByIris = {};
   let collegesByIris = {};
   let logSocByIris = {}; // Make sure this is also initialized
+  let crechesByIris = {}
 
   // — Sécurité —
   console.log('🔍 Application du filtre sécurité');
@@ -1063,6 +1173,12 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     console.timeEnd('TOTAL /get_iris_filtre');
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
+
+  // — CRECHES —
+  console.log('🔍 Application du filtre crèches');
+  const resCre = await applyCreches(iris, criteria?.creches);
+  iris = resCre.irisSet;
+  crechesByIris = resCre.crechesByIris;
 
   // — ÉCOLES —
   console.log('🔍 Application du filtre écoles');
