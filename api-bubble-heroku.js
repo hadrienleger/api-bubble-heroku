@@ -638,7 +638,7 @@ async function applyEcolesRadius(irisList, ec) {
 
   const sql = `
     SELECT p.code_iris, p.code_rne, p.ips, p.secteur, p.distance_m,
-           g.appellation_officielle, g.adresse_uai, g.code_posta_uai
+           g.appellation_officielle, g.adresse_uai, g.code_postal_uai
     FROM   education_ecoles.iris_ecoles_ips_rayon_2025 p
     JOIN education.geoloc_etab_2025 g
       ON g.numero_uai = p.code_rne
