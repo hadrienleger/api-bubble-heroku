@@ -619,14 +619,19 @@ async function applySecurite(irisList, secCrit) {
 // --------------------------------------------------------------
 // H) Critère partiel Ecoles
 // --------------------------------------------------------------
+// --------------------------------------------------------------
+// H) Critère partiel Écoles (IPS + rayon + secteur)
+// --------------------------------------------------------------
 async function applyEcolesRadius(irisList, ec) {
-  if (!ec) return { irisSet: [], ecolesByIris: {} };   // critère OFF
+  /* ---------- 1. critère OFF ? ---------- */
+  if (!ec) return { irisSet: [], ecolesByIris: {} };
 
   const { ips_min, ips_max, rayon, secteurs } = ec;
   if (ips_min == null && ips_max == null) return { irisSet: [], ecolesByIris: {} };
 
-  const secs = (secteurs && secteurs.length) ? secteurs : ['PU','PR'];
+  const secs = (secteurs && secteurs.length) ? secteurs : ['PU', 'PR'];
 
+  /* ---------- 2. build requête ---------- */
   let p = 1, vals = [irisList, rayon, secs];
   const where = [
     `code_iris = ANY($${p++})`,
@@ -637,16 +642,50 @@ async function applyEcolesRadius(irisList, ec) {
   if (ips_max != null) { where.push(`ips <= $${p}`); vals.push(ips_max); p++; }
 
   const sql = `
-    SELECT p.code_iris, p.code_rne, p.ips, p.secteur, p.distance_m,
-           g.appellation_officielle, g.adresse_uai, g.code_postal_uai
-    FROM   education_ecoles.iris_ecoles_ips_rayon_2025 p
-    JOIN education.geoloc_etab_2025 g
-      ON g.numero_uai = p.code_rne
+    SELECT p.code_iris,
+           p.code_rne,
+           p.ips,
+           p.secteur,
+           p.distance_m,
+           g.appellation_officielle,
+           g.adresse_uai,
+           g.code_posta_uai
+    FROM   education_ecoles.iris_ecoles_ips_rayon_2025 AS p
+    JOIN   education.geoloc_etab_2025                 AS g
+           ON g.numero_uai = p.code_rne
     WHERE  ${where.join(' AND ')}
   `;
+
+  /* ---------- 3. exécution ---------- */
   const { rows } = await pool.query(sql, vals);
-  /* … même post-traitement qu’avant … */
+
+  /* ---------- 4. post-traitement en mémoire ---------- */
+  const irisOK        = new Set();
+  const ecolesByIris  = {};
+
+  for (const r of rows) {
+    irisOK.add(r.code_iris);
+
+    if (!ecolesByIris[r.code_iris]) ecolesByIris[r.code_iris] = [];
+
+    ecolesByIris[r.code_iris].push({
+      code_rne   : r.code_rne,
+      ips        : Number(r.ips),
+      secteur    : r.secteur,
+      distance_m : r.distance_m,
+      nom        : r.appellation_officielle,
+      adresse    : r.adresse_uai,
+      cp         : r.code_posta_uai
+    });
+  }
+
+  /* ---------- 5. retourner l’objet attendu ---------- */
+  return {
+    irisSet     : Array.from(irisOK),   // liste des IRIS qui passent le filtre
+    ecolesByIris: ecolesByIris          // détail par IRIS
+  };
 }
+
 
 
 // --------------------------------------------------------------
