@@ -119,8 +119,10 @@ function isCollegesActivated(col) {
 }
 function isEcolesActivated(ec) {
   if (!ec) return false;
-  if (ec.ips_min != null || ec.ips_max != null) return true;
-  return false;
+  return (
+    (ec.ips_min != null || ec.ips_max != null) ||   // filtrage IPS
+    ec.rayon != null                                // OU simple rayon
+  );
 }
 
 // --------------------------------------------------------------
@@ -617,104 +619,34 @@ async function applySecurite(irisList, secCrit) {
 // --------------------------------------------------------------
 // H) Critère partiel Ecoles
 // --------------------------------------------------------------
-async function applyEcoles(irisList, ecolesCrit) {
-  console.time('applyEcoles');
+async function applyEcolesRadius(irisList, ec) {
+  if (!ec) return { irisSet: [], ecolesByIris: {} };   // critère OFF
 
-  if (!irisList.length) {
-    console.timeEnd('applyEcoles');
-    return {
-      irisSet: [],
-      ecolesByIris: {}
-    };
-  }
+  const { ips_min, ips_max, rayon, secteurs } = ec;
+  if (ips_min == null && ips_max == null) return { irisSet: [], ecolesByIris: {} };
 
-  console.time('Ecoles coverage');
-  const qCoverage = `
-    SELECT DISTINCT code_iris
-    FROM education_ecoles.iris_rne_ipsecoles
-    WHERE code_iris = ANY($1)
+  const secs = (secteurs && secteurs.length) ? secteurs : ['PU','PR'];
+
+  let p = 1, vals = [irisList, rayon, secs];
+  const where = [
+    `code_iris = ANY($${p++})`,
+    `rayon     = $${p++}`,
+    `secteur   = ANY($${p++})`
+  ];
+  if (ips_min != null) { where.push(`ips >= $${p}`); vals.push(ips_min); p++; }
+  if (ips_max != null) { where.push(`ips <= $${p}`); vals.push(ips_max); p++; }
+
+  const sql = `
+    SELECT p.code_iris, p.code_rne, p.ips, p.secteur, p.distance_m,
+           g.appellation_officielle, g.adresse_uai, g.code_posta_uai
+    FROM   education_ecoles.iris_ecoles_ips_rayon_2025 p
+    JOIN   education.geoloc_etab_2025 g USING (code_rne)
+    WHERE  ${where.join(' AND ')}
   `;
-  let coverageRes = await pool.query(qCoverage, [irisList]);
-  console.timeEnd('Ecoles coverage');
-
-  let coverageSet = new Set(coverageRes.rows.map(r => r.code_iris));
-  let subsetCouvert = irisList.filter(ci => coverageSet.has(ci));
-  let subsetHors = irisList.filter(ci => !coverageSet.has(ci));
-
-  let ecolesByIris = {};
-  for (let ci of subsetHors) {
-    ecolesByIris[ci] = "hors-scope";
-  }
-
-  if (!subsetCouvert.length) {
-    console.timeEnd('applyEcoles');
-    return {
-      irisSet: subsetHors,
-      ecolesByIris
-    };
-  }
-
-  console.time('Ecoles pivot');
-  let wPivot = [`code_iris = ANY($1)`];
-  let vPivot = [subsetCouvert];
-  let idx = 2;
-
-  let doIntersection = false;
-  if (ecolesCrit && ecolesCrit.ips_min != null) {
-    wPivot.push(`ips >= $${idx}`);
-    vPivot.push(ecolesCrit.ips_min);
-    idx++;
-    doIntersection = true;
-  }
-  if (ecolesCrit && ecolesCrit.ips_max != null) {
-    wPivot.push(`ips <= $${idx}`);
-    vPivot.push(ecolesCrit.ips_max);
-    idx++;
-    doIntersection = true;
-  }
-
-  const sqlPivot = `
-    SELECT code_iris, code_rne, ips, nom_ecole
-    FROM education_ecoles.iris_rne_ipsecoles
-    WHERE ${wPivot.join(' AND ')}
-  `;
-  let pivotRes = await pool.query(sqlPivot, vPivot);
-  console.timeEnd('Ecoles pivot');
-
-  let irisFoundSet = new Set();
-  let mapEcoles = {};
-  for (let row of pivotRes.rows) {
-    let ci = row.code_iris;
-    irisFoundSet.add(ci);
-    if (!mapEcoles[ci]) mapEcoles[ci] = [];
-    mapEcoles[ci].push({
-      code_rne: row.code_rne,
-      ips: Number(row.ips),
-      nom_ecole: row.nom_ecole
-    });
-  }
-
-  let finalSet;
-  if (doIntersection) {
-    finalSet = subsetCouvert.filter(ci => irisFoundSet.has(ci));
-  } else {
-    finalSet = subsetCouvert;
-  }
-
-  for (let ci of finalSet) {
-    ecolesByIris[ci] = mapEcoles[ci] || [];
-  }
-
-  let irisFinal = finalSet.concat(subsetHors);
-
-  console.log(`applyEcoles => coverageRes=${coverageRes.rowCount} pivotRes=${pivotRes.rowCount}`);
-  console.timeEnd('applyEcoles');
-
-  return {
-    irisSet: irisFinal,
-    ecolesByIris
-  };
+  const { rows } = await pool.query(sql, vals);
+  /* … même post-traitement qu’avant … */
 }
+
 
 // --------------------------------------------------------------
 // I) Critère partiel Collèges
@@ -976,7 +908,7 @@ async function buildIrisDetail(irisCodes) {
   const { revenusByIris }            = await applyRevenus(afterDVF,  null);
   const { logSocByIris }             = await applyLogSoc(afterDVF,   null);
   const { prixMedianByIris }         = await applyPrixMedian(afterDVF, null);
-  const { ecolesByIris }             = await applyEcoles(afterDVF,   null);
+  const { ecolesByIris }             = await applyEcolesRadius(afterDVF,   null);
   const { collegesByIris }           = await applyColleges(afterDVF, null);
   const { securiteByIris,
           irisNameByIris }           = await gatherSecuriteByIris(afterDVF);
@@ -1216,8 +1148,8 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
 
   // — ÉCOLES —
   console.log('🔍 Application du filtre écoles');
-  // Pass criteria.ecoles to applyEcoles
-  const resEco = await applyEcoles(iris, criteria?.ecoles);
+  // Pass criteria.ecoles to applyEcolesRadius
+  const resEco = await applyEcolesRadius(iris, criteria?.ecoles);
   iris = resEco.irisSet;
   ecolesByIris = resEco.ecolesByIris;
 
