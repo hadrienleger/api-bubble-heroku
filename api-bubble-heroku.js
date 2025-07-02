@@ -649,7 +649,7 @@ async function applyEcolesRadius(irisList, ec) {
            p.distance_m,
            g.appellation_officielle,
            g.adresse_uai,
-           g.code_posta_uai
+           g.code_postal_uai
     FROM   education_ecoles.iris_ecoles_ips_rayon_2025 AS p
     JOIN   education.geoloc_etab_2025                 AS g
            ON g.numero_uai = p.code_rne
@@ -675,7 +675,7 @@ async function applyEcolesRadius(irisList, ec) {
       distance_m : r.distance_m,
       nom        : r.appellation_officielle,
       adresse    : r.adresse_uai,
-      cp         : r.code_posta_uai
+      cp         : r.code_postal_uai
     });
   }
 
