@@ -640,7 +640,8 @@ async function applyEcolesRadius(irisList, ec) {
     SELECT p.code_iris, p.code_rne, p.ips, p.secteur, p.distance_m,
            g.appellation_officielle, g.adresse_uai, g.code_posta_uai
     FROM   education_ecoles.iris_ecoles_ips_rayon_2025 p
-    JOIN   education.geoloc_etab_2025 g USING (code_rne)
+    JOIN education.geoloc_etab_2025 g
+      ON g.numero_uai = p.code_rne
     WHERE  ${where.join(' AND ')}
   `;
   const { rows } = await pool.query(sql, vals);
