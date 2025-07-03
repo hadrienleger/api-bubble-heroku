@@ -617,19 +617,23 @@ async function applySecurite(irisList, secCrit) {
 }
 
 // --------------------------------------------------------------
-// H) Critère partiel Ecoles
-// --------------------------------------------------------------
-// --------------------------------------------------------------
 // H) Critère partiel Écoles (IPS + rayon + secteur)
 // --------------------------------------------------------------
 async function applyEcolesRadius(irisList, ec) {
+
   /* ---------- 1. critère OFF ? ---------- */
-  if (!ec) return { irisSet: [], ecolesByIris: {} };
+  /* critère absent OU totalement vide : on rend la liste telle quelle */
+  if (!ec ||
+      (ec.ips_min == null && ec.ips_max == null && ec.rayon == null)) {
+    return { irisSet: irisList, ecolesByIris: {} };
+  }
 
   const { ips_min, ips_max, rayon, secteurs } = ec;
-  if (ips_min == null && ips_max == null) return { irisSet: [], ecolesByIris: {} };
 
-  const secs = (secteurs && secteurs.length) ? secteurs : ['PU', 'PR'];
+   const rawSecs = Array.isArray(secteurs) ? secteurs.filter(x => x) : null;
+   const secs    = rawSecs && rawSecs.length ? rawSecs
+                   : secteur ? [secteur]      // accepte l’ancien champ singulier
+                   : ['PU','PR'];
 
   /* ---------- 2. build requête ---------- */
   let p = 1, vals = [irisList, rayon, secs];
