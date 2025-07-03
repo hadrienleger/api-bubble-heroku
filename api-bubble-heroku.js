@@ -1189,7 +1189,7 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
   // — ÉCOLES —
   console.log('🔍 Application du filtre écoles');
   // Pass criteria.ecoles to applyEcolesRadius
-  console.log('> iris avant écoles =', irisList.length);         // ← cartes + prix + crèches
+  console.log('> iris avant écoles =', iris.length);         // ← cartes + prix + crèches
   const resEco = await applyEcolesRadius(iris, criteria?.ecoles);
   console.log('> iris après écoles =', resEco.irisSet.length);   // ← filtre écoles
   iris = resEco.irisSet;
