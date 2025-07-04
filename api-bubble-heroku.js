@@ -1078,7 +1078,7 @@ app.post('/get_iris_filtre', async (req, res) => {
       return res.json({ nb_iris: 0, iris: [] });
     }
 
-    console inoltre('📬 _applyAllFiltersAndRespond() CALLED');
+console.log('📬 _applyAllFiltersAndRespond() CALLED');
     await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode);
     return;
 
