@@ -1289,8 +1289,8 @@ for (const r of commRes.rows) {
   }));
 
 /* ---------- 🆕  Agrégat par commune pour l’onglet « Communes » ---------- */
-const communesData = await groupByCommunes(iris, communesFinal)
-  .map(r => ({
+ const rawCommunes = await groupByCommunes(iris, communesFinal);
+ const communesData = rawCommunes.map(r => ({  .map(r => ({
     nom_commune : r.nom_com,
     code_dep    : r.insee_dep,
     nom_dep     : r.nom_dep,
