@@ -1236,6 +1236,30 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     return res.json({ nb_iris: 0, iris: [], communes: [] });
   }
 
+  /* ----------  MAPPING COMMUNES / DÉPARTEMENTS POUR LA REPONSE FINALE ---------- */
+const sqlComm = `
+  SELECT i.code_iris,
+         COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_com,
+         c.nom                  AS nom_commune,
+         c.insee_dep,
+         c.nom_dep
+  FROM decoupages.iris_grandeetendue_2022 i
+  JOIN decoupages.communes c
+       ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+  WHERE i.code_iris = ANY($1)
+`;
+const commRes = await pool.query(sqlComm, [iris]);
+
+/* → { "751176510": { nom_commune:"Paris 17e Arr.", code_dep:"75", nom_dep:"Paris" } } */
+const communeByIris = {};
+for (const r of commRes.rows) {
+  communeByIris[r.code_iris] = {
+    nom_commune : r.nom_commune,
+    code_dep    : r.insee_dep,
+    nom_dep     : r.nom_dep
+  };
+}
+
   // ✅ Final response
   // After all filtering, gather detailed information for the *final* set of IRIS codes.
   const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(iris);
@@ -1245,6 +1269,13 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
   const irisFinalDetail = iris.map(code => ({
     code_iris       : code,
     nom_iris        : irisNameByIris[code] ?? null,
+
+    /* ---- nouvelles infos localisation ---- */
+    nom_commune     : communeByIris[code]?.nom_commune ?? null,
+    code_dep        : communeByIris[code]?.code_dep    ?? null,
+    nom_dep         : communeByIris[code]?.nom_dep     ?? null,
+
+    /* ---- indicateurs ---- */
     dvf_count       : dvfCountByIris[code] ?? 0,
     dvf_count_total : dvfTotalByIris[code] ?? 0,
     mediane_rev_decl: revenusByIris[code]?.mediane_rev_decl ?? null,
@@ -1257,11 +1288,20 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     taux_creches    : crechesByIris[code]                 ?? null
   }));
 
+/* ---------- 🆕  Agrégat par commune pour l’onglet « Communes » ---------- */
+const communesData = await groupByCommunes(iris, communesFinal)
+  .map(r => ({
+    nom_commune : r.nom_com,
+    code_dep    : r.insee_dep,
+    nom_dep     : r.nom_dep,
+    nb_iris     : r.nb_iris
+  }));
+
   console.log('✅ Tous les filtres appliqués →', irisFinalDetail.length, 'IRIS');
   return res.json({
     nb_iris : irisFinalDetail.length,
     iris    : irisFinalDetail,
-    communes: communesFinal
+    communes: communesData
   });
 }
 
