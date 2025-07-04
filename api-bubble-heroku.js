@@ -165,10 +165,31 @@ async function getArrondissementsForVilleGlobale(codeVille) {
   return r.rows.map(row => row.insee_arm);
 }
 
+/**
+ * Devine si un code correspond à un Département ou une Commune.
+ * - Départements : 1–95, 971–974, 976, 2A, 2B…
+ * - Communes    : 5 caractères numériques (75056, 35238…)
+ */
+function looksLikeDepartement(code){
+  const s = String(code);
+  // Codes numériques 1–95 ou 971–976
+  if (/^\d{1,3}$/.test(s))     return true;   // 01, 93, 976…
+  // Codes Corse 2A / 2B
+  if (/^\d{2}[AB]$/.test(s))   return true;   // 2A, 2B
+  return false;
+}
+
 async function gatherCommuneCodes(selectedLocalities) {
   let allCodes = [];
 
   for (let loc of selectedLocalities) {
+       /* -----------------------------------------------------------------
+      ①  Correction automatique : si on reçoit « commune » mais que le
+         code ressemble clairement à un département, on corrige.
+   ------------------------------------------------------------------*/
+   if (loc.type_collectivite === 'commune' && looksLikeDepartement(loc.code_insee)){
+     loc.type_collectivite = 'Département';
+   }
     if (loc.type_collectivite === "Département") {
       console.time(`getCommunesFromDep-${loc.code_insee}`);
       let result = await getCommunesFromDepartements([loc.code_insee]);
@@ -1016,46 +1037,7 @@ app.post('/get_iris_filtre', async (req, res) => {
 
   try {
     /************  0.  LOCALISATION GÉNÉRIQUE  ****************/
-    const body = req.body;
-const { mode, codes_insee: codesInseeOrig, center, radius_km, criteria = {} } = req.body;
-
- // copie modifiable
- let codesInsee = Array.isArray(codesInseeOrig) ? [...codesInseeOrig] : [];
-    // --------------------------------------------------------------
-    // [NOUVEAU] Détection de départements → remplacement par communes
-    // --------------------------------------------------------------
-
-    let codesInsee = body.codes_insee || [];
-
-    codesInsee = codesInsee.map(code => code?.toString());  // Force string
-
-    let communeCodes = [];
-    let departementCodes = [];
-
-    for (const code of codesInsee) {
-      if (code && code.length >= 2 && code.length <= 3 && code.length !== 5) {
-        departementCodes.push(code);
-      } else if (code && code.length === 5) {
-        communeCodes.push(code);
-      }
-    }
-
-    if (departementCodes.length > 0) {
-      console.log("→ Codes départements détectés :", departementCodes);
-const resDeps = await pool.query(
-  `SELECT DISTINCT insee_com
-   FROM decoupages.communes
-   WHERE insee_dep = ANY($1)`,
-  [departementCodes]
-);
-
-const communesFromDeps = resDeps.rows.map(r => r.insee_com); // colonne correcte
-communeCodes.push(...communesFromDeps);
-console.log(`→ ${communesFromDeps.length} communes récupérées depuis départements`);
-
-// ⚠️  on met à jour *aussi* la variable locale
-codesInsee = communeCodes;
-}
+    const { mode, codes_insee, center, radius_km, criteria = {} } = req.body;
 
     /************  0.bis  PARAMÉTRAGE RECHERCHE SANS LOCALISATION (CRITERIA-ONLY)  ****************/
     /* -----------------------------------------------------------
@@ -1087,10 +1069,10 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, 'ra
     /* ---------- MODE 1 : collectivités ---------- */
     if (mode === 'collectivites') {
       const fakeParams = {
-        selected_localities: (codesInsee || []).map(c => ({
-          code_insee:        c,
-          type_collectivite: 'commune'    // valeur neutre, juste pour ré-utiliser la fonction
-        }))
+ selected_localities: (codes_insee || []).map(c => ({
+   code_insee:        c,
+   type_collectivite: guessCollectiviteType(c)
+ }))
       };
 
       const r = await getIrisLocalisationAndSecurite(fakeParams, criteria);
