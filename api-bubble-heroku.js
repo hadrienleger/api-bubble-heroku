@@ -183,22 +183,21 @@ async function gatherCommuneCodes(selectedLocalities) {
   let allCodes = [];
 
   for (let loc of selectedLocalities) {
-       /* -----------------------------------------------------------------
-      ①  Correction automatique : si on reçoit « commune » mais que le
+    /* -----------------------------------------------------------------
+       ① Correction automatique : si on reçoit « commune » mais que le
          code ressemble clairement à un département, on corrige.
-   ------------------------------------------------------------------*/
-   if (loc.type_collectivite === 'commune' && looksLikeDepartement(loc.code_insee)){
-     loc.type_collectivite = 'Département';
-   }
+    ------------------------------------------------------------------*/
+    if (loc.type_collectivite === 'commune' && looksLikeDepartement(loc.code_insee)) {
+      loc.type_collectivite = 'Département';
+    }
+
     if (loc.type_collectivite === "Département") {
       console.time(`getCommunesFromDep-${loc.code_insee}`);
       let result = await getCommunesFromDepartements([loc.code_insee]);
       console.timeEnd(`getCommunesFromDep-${loc.code_insee}`);
       allCodes.push(...result);
     } else {
-      if (loc.type_collectivite === "commune"
-        && ["75056", "69123", "13055"].includes(loc.code_insee)
-      ) {
+      if (loc.type_collectivite === "commune" && ["75056", "69123", "13055"].includes(loc.code_insee)) {
         let arrCodes = await getArrondissementsForVilleGlobale(loc.code_insee);
         allCodes.push(...arrCodes);
       } else {
@@ -1068,12 +1067,12 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, 'ra
 
     /* ---------- MODE 1 : collectivités ---------- */
     if (mode === 'collectivites') {
-      const fakeParams = {
- selected_localities: (codes_insee || []).map(c => ({
-   code_insee:        c,
-   type_collectivite: guessCollectiviteType(c)
- }))
-      };
+const fakeParams = {
+  selected_localities: (codes_insee || []).map(c => ({
+    code_insee: c,
+    type_collectivite: 'commune'
+  }))
+};
 
       const r = await getIrisLocalisationAndSecurite(fakeParams, criteria);
 
