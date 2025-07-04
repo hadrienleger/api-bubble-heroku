@@ -1016,6 +1016,7 @@ app.post('/get_iris_filtre', async (req, res) => {
 
   try {
     /************  0.  LOCALISATION GÉNÉRIQUE  ****************/
+    const body = req.body;
     const { mode, codes_insee, center, radius_km, criteria = {} } = req.body;
 
     // --------------------------------------------------------------
