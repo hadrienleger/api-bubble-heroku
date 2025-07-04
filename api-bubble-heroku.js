@@ -1040,16 +1040,21 @@ app.post('/get_iris_filtre', async (req, res) => {
 
     if (departementCodes.length > 0) {
       console.log("→ Codes départements détectés :", departementCodes);
-      const resDeps = await pool.query(
-        `SELECT code_insee FROM decoupages.communes WHERE code_departement = ANY($1)`,
-        [departementCodes]
-      );
-      const communesFromDeps = resDeps.rows.map(r => r.code_insee);
-      communeCodes.push(...communesFromDeps);
-      console.log(`→ ${communesFromDeps.length} communes récupérées depuis départements`);
-    }
+const resDeps = await pool.query(
+  `SELECT DISTINCT insee_com
+   FROM decoupages.communes
+   WHERE insee_dep = ANY($1)`,
+  [departementCodes]
+);
 
-    body.codes_insee = communeCodes;
+const communesFromDeps = resDeps.rows.map(r => r.insee_com); // colonne correcte
+communeCodes.push(...communesFromDeps);
+console.log(`→ ${communesFromDeps.length} communes récupérées depuis départements`);
+
+// ⚠️  on met à jour *aussi* la variable locale
+codes_insee      = communeCodes;
+body.codes_insee = communeCodes;
+
 
     /************  0.bis  PARAMÉTRAGE RECHERCHE SANS LOCALISATION (CRITERIA-ONLY)  ****************/
     /* -----------------------------------------------------------
