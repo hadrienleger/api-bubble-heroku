@@ -971,7 +971,7 @@ async function buildIrisDetail(irisCodes, criteria = {}) {
              COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_com,
              c.nom AS nom_com,
              c.insee_dep AS code_dep,
-             d.nom_dep AS nom_dep
+             d.nom AS nom_dep
       FROM decoupages.iris_grandeetendue_2022 i
       JOIN decoupages.communes c
            ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
