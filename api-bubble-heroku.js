@@ -950,82 +950,69 @@ async function groupByCommunes(irisList, communesFinal) {
 }
 
 // ------------------------------------------------------------------
-// FONCTION COMMUNE : construit la fiche quartier
-// ------------------------------------------------------------------
-// ------------------------------------------------------------------
 // FONCTION COMMUNE : construit la fiche quartier complète
 // ------------------------------------------------------------------
-async function buildIrisDetail(irisCodes) {
-  /* 1️⃣  Premier passage : on vérifie le flux DVF.
-        applyDVF renvoie :
-          - afterDVF : la liste des IRIS qu’il trouve        (array)
-          - dvfCountByIris : nombre de mutations filtrées    (objet)
-        Note : si aucun critère DVF n’est activé, afterDVF == irisCodes.
-  */
-  const { irisSet: afterDVF, dvfCountByIris } =
-    await applyDVF(irisCodes, null);
+async function buildIrisDetail(irisCodes, criteria = {}) {
+  const { irisSet: afterDVF, dvfCountByIris } = await applyDVF(irisCodes, criteria?.dvf);
+  const dvfTotalByIris = await getDVFCountTotal(afterDVF);
+  const { revenusByIris } = await applyRevenus(afterDVF, criteria?.filosofi);
+  const { logSocByIris } = await applyLogSoc(afterDVF, criteria?.filosofi);
+  const { prixMedianByIris } = await applyPrixMedian(afterDVF, criteria?.prixMedianM2);
+  const { ecolesByIris } = await applyEcolesRadius(afterDVF, criteria?.ecoles);
+  const { collegesByIris } = await applyColleges(afterDVF, criteria?.colleges);
+  const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(afterDVF);
+  const { crechesByIris } = await applyCreches(afterDVF, criteria?.creches);
 
-  /* 2️⃣  Toutes les fonctions suivantes doivent travailler
-        EXACTEMENT sur ce même ensemble afterDVF, sinon on risque
-        d’avoir des tableaux vides ou incohérents.              */
-  const dvfTotalByIris               = await getDVFCountTotal(afterDVF);
-  const { revenusByIris }            = await applyRevenus(afterDVF,  null);
-  const { logSocByIris }             = await applyLogSoc(afterDVF,   null);
-  const { prixMedianByIris }         = await applyPrixMedian(afterDVF, null);
-  const { ecolesByIris }             = await applyEcolesRadius(afterDVF,   null);
-  const { collegesByIris }           = await applyColleges(afterDVF, null);
-  const { securiteByIris,
-          irisNameByIris }           = await gatherSecuriteByIris(afterDVF);
-
-  //  Passage qui va nous servir à envoyer la commune au endpoint iris_by_point
+  // Requête pour récupérer commune et département
   const sqlCom = `
     SELECT i.code_iris,
-           -- Paris, Lyon, Marseille : on prend insee_arm si non vide
            COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_com,
-           c.nom AS nom_com
+           c.nom AS nom_com,
+           c.insee_dep AS code_dep,
+           d.nom AS nom_dep
     FROM decoupages.iris_grandeetendue_2022 i
     JOIN decoupages.communes c
          ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+    JOIN decoupages.departements d
+         ON c.insee_dep = d.insee_dep
     WHERE i.code_iris = ANY($1)
   `;
   const comRes = await pool.query(sqlCom, [afterDVF]);
 
-  // ⇒ { "751176510": { insee_com:"75117", nom_com:"Paris 17e Arrondissement" } }
   const communeByIris = {};
   for (const row of comRes.rows) {
     communeByIris[row.code_iris] = {
-      insee_com : row.insee_com,
-      nom_com   : row.nom_com
+      nom_commune: row.nom_com,
+      code_dep: row.code_dep,
+      nom_dep: row.nom_dep
     };
   }
 
-
-  /* 3️⃣  On assemble l’objet final en bouclant sur afterDVF,
-        pas sur irisCodes. */
   const irisFinalDetail = [];
-
   for (const iris of afterDVF) {
     const commune = communeByIris[iris] ?? {};
     irisFinalDetail.push({
-      code_iris        : iris,
-      nom_iris         : irisNameByIris[iris]       ?? null,
-      insee_com        : commune.insee_com         ?? null,   // 🆕
-      nom_commune      : commune.nom_com           ?? null,   // 🆕
-      dvf_count        : dvfCountByIris[iris]       ?? 0,
-      dvf_count_total  : dvfTotalByIris[iris]       ?? 0,
-      mediane_rev_decl : revenusByIris[iris]?.mediane_rev_decl ?? null,
-      part_log_soc     : logSocByIris[iris]?.part_log_soc     ?? null,
-      securite         : securiteByIris[iris]?.[0]?.note      ?? null,
-      ecoles           : ecolesByIris[iris]                   ?? [],
-      colleges         : collegesByIris[iris]                 ?? [],
-      prix_median_m2   : prixMedianByIris[iris]               ?? null,
-      taux_creches: crechesByIris[code] ?? null
+      code_iris: iris,
+      nom_iris: irisNameByIris[iris] ?? null,
+      commune: {
+        nom_commune: commune.nom_commune ?? null,
+        nom_dep: commune.nom_dep ?? null,
+        code_dep: commune.code_dep ?? null
+      },
+      dvf_count: dvfCountByIris[iris] ?? 0,
+      dvf_count_total: dvfTotalByIris[iris] ?? 0,
+      mediane_rev_decl: revenusByIris[iris]?.mediane_rev_decl ?? null,
+      part_log_soc: logSocByIris[iris]?.part_log_soc ?? null,
+      securite: securiteByIris[iris]?.[0]?.note ?? null,
+      ecoles: ecolesByIris[iris] ?? [],
+      colleges: collegesByIris[iris] ?? [],
+      prix_median_m2: prixMedianByIris[iris] ?? null,
+      taux_creches: crechesByIris[iris] ?? null
     });
   }
 
-  return irisFinalDetail;   // ← tableau d’un ou plusieurs objets
+  return irisFinalDetail;
 }
-
 
 // ------------------------------------------------------------------
 // POST /get_iris_filtre  (localisation + critères éventuels)
@@ -1035,91 +1022,56 @@ app.post('/get_iris_filtre', async (req, res) => {
   console.time('TOTAL /get_iris_filtre');
 
   try {
-    /************  0.  LOCALISATION GÉNÉRIQUE  ****************/
     const { mode, codes_insee, center, radius_km, criteria = {} } = req.body;
 
-    /************  0.bis  PARAMÉTRAGE RECHERCHE SANS LOCALISATION (CRITERIA-ONLY)  ****************/
-    /* -----------------------------------------------------------
-     *  RACCROCHAGE DIRECT : si Bubble envoie déjà une liste IRIS
-     * --------------------------------------------------------- */
     if (Array.isArray(req.body.iris_base) && req.body.iris_base.length) {
       console.log(`🔄 Bypass localisation : ${req.body.iris_base.length} IRIS reçus`);
+      let arrayIrisLoc = req.body.iris_base;
 
-      // A) on ré-utilise directement cette liste
-      let arrayIrisLoc  = req.body.iris_base;
-
-      // B) petites communes associées (pour l’onglet “Communes”)
-      const sql = `
-        SELECT DISTINCT insee_com
-        FROM decoupages.iris_grandeetendue_2022
-        WHERE code_iris = ANY($1)
-      `;
-      const { rows }   = await pool.query(sql, [arrayIrisLoc]);
-      let  communesFinal = rows.map(r => r.insee_com);
-
-      /* --- et on saute directement au bloc de filtres --- */
-await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, 'rayon');
-      return;   // plus besoin du code juste après
+      await _applyAllFiltersAndRespond(res, arrayIrisLoc, [], criteria, 'rayon');
+      return;
     }
 
-    let arrayIrisLoc  = [];   // liste des codes IRIS trouvés
-    let communesFinal = [];   // communes concernées (pour l’onglet « Communes »)
+    let arrayIrisLoc = [];
+    let communesFinal = [];
 
-    /* ---------- MODE 1 : collectivités ---------- */
     if (mode === 'collectivites') {
-const fakeParams = {
-  selected_localities: (codes_insee || []).map(c => ({
-    code_insee: c,
-    type_collectivite: 'commune'
-  }))
-};
-
+      const fakeParams = {
+        selected_localities: (codes_insee || []).map(c => ({
+          code_insee: c,
+          type_collectivite: 'commune'
+        }))
+      };
       const r = await getIrisLocalisationAndSecurite(fakeParams, criteria);
-
-      arrayIrisLoc  = r.arrayIrisLoc;
+      arrayIrisLoc = r.arrayIrisLoc;
       communesFinal = r.communesFinal;
-
-    /* ---------- MODE 2 : cercle rayon ---------- */
     } else if (mode === 'rayon') {
       const { lon, lat } = center;
-      const radius_m = Number(radius_km) * 1000;   // 0.5 km → 500 m
+      const radius_m = Number(radius_km) * 1000;
       const sql = `
-       SELECT code_iris
-       FROM decoupages.iris_grandeetendue_2022
-       WHERE ST_DWithin(
-               geom_2154,
-               ST_Transform(
-                 ST_SetSRID(ST_MakePoint($1,$2),4326), 2154),
-               $3                       -- distance en mètres
-             )
+        SELECT code_iris
+        FROM decoupages.iris_grandeetendue_2022
+        WHERE ST_DWithin(
+                geom_2154,
+                ST_Transform(
+                  ST_SetSRID(ST_MakePoint($1,$2),4326), 2154),
+                $3
+              )
       `;
       const { rows } = await pool.query(sql, [lon, lat, radius_m]);
       arrayIrisLoc = rows.map(r => r.code_iris);
-
-      /* communesFinal = toutes les communes touchées */
-      const qCom = `
-        SELECT DISTINCT insee_com
-        FROM decoupages.iris_grandeetendue_2022
-        WHERE code_iris = ANY($1)
-      `;
-      const cRes = await pool.query(qCom, [arrayIrisLoc]);
-      communesFinal = cRes.rows.map(r => r.insee_com);
-
-    /* ---------- mode inconnu ---------- */
     } else {
       return res.status(400).json({ error: 'mode invalid' });
     }
 
-    /* Aucun IRIS trouvé → réponse vide */
     if (!arrayIrisLoc.length) {
       console.timeEnd('TOTAL /get_iris_filtre');
-      return res.json({ nb_iris: 0, iris: [], communes: [] });
+      return res.json({ nb_iris: 0, iris: [] });
     }
 
-console.log('📬 _applyAllFiltersAndRespond() CALLED');
-    /* ✅ On a trouvé des IRIS : on lance maintenant tous les filtres */
-await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode);
-    return;      // on sort, le reste du handler ne s’exécute plus
+    console inoltre('📬 _applyAllFiltersAndRespond() CALLED');
+    await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode);
+    return;
 
   } catch (err) {
     console.error('Erreur dans /get_iris_filtre :', err);
@@ -1131,177 +1083,17 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mod
 async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode = null) {
   if (!arrayIrisLoc.length) {
     console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
+    return res.json({ nb_iris: 0, iris: [] });
   }
 
-  let iris = arrayIrisLoc; // Initialize iris with the localized IRIS codes
-  let securiteFromApply = {};
-  let dvfCountByIris = {};
-  let revenusByIris = {};
-  let prixMedianByIris = {};
-  let ecolesByIris = {};
-  let collegesByIris = {};
-  let logSocByIris = {}; // Make sure this is also initialized
-  let crechesByIris = {}
-
-  // — Sécurité —
-  console.log('🔍 Application du filtre sécurité');
-  // Pass criteria.securite to applySecurite
-  const resSecu = await applySecurite(iris, criteria?.securite);
-  iris = resSecu.irisSet;
-  console.log(`✅ IRIS count after securite filter: ${iris.length}`);
-  securiteFromApply = resSecu.securiteByIris;
-
-  if (!iris.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
-
-  // — Prix médian m2 —
-  console.log('🔍 Application du filtre prix median');
-  // Pass criteria.prixMedianM2 to applyPrixMedian
-  const resPrix = await applyPrixMedian(iris, criteria?.prixMedianM2);
-  iris = resPrix.irisSet;
-  prixMedianByIris = resPrix.prixMedianByIris;
-
-  if (!iris.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
-
-  // — DVF —
-  console.log('🔍 Application du filtre DVF');
-  // Pass criteria.dvf to applyDVF
-  const resDVF = await applyDVF(iris, criteria?.dvf);
-  iris = resDVF.irisSet;
-  dvfCountByIris = resDVF.dvfCountByIris;
-
-  if (!iris.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
-
-  // — FILOSOFI (Revenus) —
-  console.log('🔍 Application du filtre revenus');
-  // Pass criteria.filosofi to applyRevenus
-  const resRev = await applyRevenus(iris, criteria?.filosofi);
-  iris = resRev.irisSet;
-  revenusByIris = resRev.revenusByIris;
-
-  if (!iris.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
-
-  // - LOGEMENTS SOCIAUX -
-  console.log('🔍 Application du filtre logements sociaux');
-  // Pass criteria.filosofi to applyLogSoc
-  const resSoc = await applyLogSoc(iris, criteria?.filosofi);
-  iris = resSoc.irisSet;
-  logSocByIris = resSoc.logSocByIris;
-  if (!iris.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
-
-  // — CRECHES —
-  console.log('🔍 Application du filtre crèches');
-  const resCre = await applyCreches(iris, criteria?.creches);
-  iris = resCre.irisSet;
-  crechesByIris = resCre.crechesByIris;
-
-  // — ÉCOLES —
-  console.log('🔍 Application du filtre écoles');
-  // Pass criteria.ecoles to applyEcolesRadius
-  console.log('> iris avant écoles =', iris.length);         // ← cartes + prix + crèches
-  const resEco = await applyEcolesRadius(iris, criteria?.ecoles);
-  console.log('> iris après écoles =', resEco.irisSet.length);   // ← filtre écoles
-  iris = resEco.irisSet;
-  ecolesByIris = resEco.ecolesByIris;
-
-  if (!iris.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
-
-  // — COLLÈGES —
-  console.log('🔍 Application du filtre collèges');
-  // Pass criteria.colleges to applyColleges
-  const resCol = await applyColleges(iris, criteria?.colleges);
-  iris = resCol.irisSet;
-  collegesByIris = resCol.collegesByIris;
-
-  if (!iris.length) {
-    console.timeEnd('TOTAL /get_iris_filtre');
-    return res.json({ nb_iris: 0, iris: [], communes: [] });
-  }
-
-  /* ----------  MAPPING COMMUNES / DÉPARTEMENTS POUR LA REPONSE FINALE ---------- */
-const sqlComm = `
-  SELECT i.code_iris,
-         COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_com,
-         c.nom                  AS nom_commune,
-         c.insee_dep,
-         c.nom_dep
-  FROM decoupages.iris_grandeetendue_2022 i
-  JOIN decoupages.communes c
-       ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
-  WHERE i.code_iris = ANY($1)
-`;
-const commRes = await pool.query(sqlComm, [iris]);
-
-/* → { "751176510": { nom_commune:"Paris 17e Arr.", code_dep:"75", nom_dep:"Paris" } } */
-const communeByIris = {};
-for (const r of commRes.rows) {
-  communeByIris[r.code_iris] = {
-    nom_commune : r.nom_commune,
-    code_dep    : r.insee_dep,
-    nom_dep     : r.nom_dep
-  };
-}
-
-  // ✅ Final response
-  // After all filtering, gather detailed information for the *final* set of IRIS codes.
-  const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(iris);
-  const dvfTotalByIris = await getDVFCountTotal(iris);
-
-
-  const irisFinalDetail = iris.map(code => ({
-    code_iris       : code,
-    nom_iris        : irisNameByIris[code] ?? null,
-
-    /* ---- nouvelles infos localisation ---- */
-    nom_commune     : communeByIris[code]?.nom_commune ?? null,
-    code_dep        : communeByIris[code]?.code_dep    ?? null,
-    nom_dep         : communeByIris[code]?.nom_dep     ?? null,
-
-    /* ---- indicateurs ---- */
-    dvf_count       : dvfCountByIris[code] ?? 0,
-    dvf_count_total : dvfTotalByIris[code] ?? 0,
-    mediane_rev_decl: revenusByIris[code]?.mediane_rev_decl ?? null,
-    part_log_soc    : logSocByIris[code]?.part_log_soc    ?? null,
-    // Use securiteFromApply which holds the result of the filtering step
-    securite        : securiteFromApply[code]?.[0]?.note ?? null,
-    prix_median_m2  : prixMedianByIris[code]              ?? null,
-    ecoles          : ecolesByIris[code]                  ?? [],
-    colleges        : collegesByIris[code]                ?? [],
-    taux_creches    : crechesByIris[code]                 ?? null
-  }));
-
-/* ---------- 🆕  Agrégat par commune pour l’onglet « Communes » ---------- */
- const rawCommunes = await groupByCommunes(iris, communesFinal);
- const communesData = rawCommunes.map(r => ({  .map(r => ({
-    nom_commune : r.nom_com,
-    code_dep    : r.insee_dep,
-    nom_dep     : r.nom_dep,
-    nb_iris     : r.nb_iris
-  }));
+  // Appeler buildIrisDetail pour obtenir les détails complets des IRIS
+  const irisFinalDetail = await buildIrisDetail(arrayIrisLoc, criteria);
 
   console.log('✅ Tous les filtres appliqués →', irisFinalDetail.length, 'IRIS');
+  console.timeEnd('TOTAL /get_iris_filtre');
   return res.json({
-    nb_iris : irisFinalDetail.length,
-    iris    : irisFinalDetail,
-    communes: communesData
+    nb_iris: irisFinalDetail.length,
+    iris: irisFinalDetail
   });
 }
 
