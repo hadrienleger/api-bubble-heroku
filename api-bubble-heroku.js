@@ -1054,7 +1054,7 @@ console.log(`→ ${communesFromDeps.length} communes récupérées depuis dépar
 // ⚠️  on met à jour *aussi* la variable locale
 codes_insee      = communeCodes;
 body.codes_insee = communeCodes;
-
+}
 
     /************  0.bis  PARAMÉTRAGE RECHERCHE SANS LOCALISATION (CRITERIA-ONLY)  ****************/
     /* -----------------------------------------------------------
