@@ -953,65 +953,74 @@ async function groupByCommunes(irisList, communesFinal) {
 // FONCTION COMMUNE : construit la fiche quartier complète
 // ------------------------------------------------------------------
 async function buildIrisDetail(irisCodes, criteria = {}) {
-  const { irisSet: afterDVF, dvfCountByIris } = await applyDVF(irisCodes, criteria?.dvf);
-  const dvfTotalByIris = await getDVFCountTotal(afterDVF);
-  const { revenusByIris } = await applyRevenus(afterDVF, criteria?.filosofi);
-  const { logSocByIris } = await applyLogSoc(afterDVF, criteria?.filosofi);
-  const { prixMedianByIris } = await applyPrixMedian(afterDVF, criteria?.prixMedianM2);
-  const { ecolesByIris } = await applyEcolesRadius(afterDVF, criteria?.ecoles);
-  const { collegesByIris } = await applyColleges(afterDVF, criteria?.colleges);
-  const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(afterDVF);
-  const { crechesByIris } = await applyCreches(afterDVF, criteria?.creches);
+  console.time('buildIrisDetail');
+  try {
+    const { irisSet: afterDVF, dvfCountByIris } = await applyDVF(irisCodes, criteria?.dvf);
+    const dvfTotalByIris = await getDVFCountTotal(afterDVF);
+    const { revenusByIris } = await applyRevenus(afterDVF, criteria?.filosofi);
+    const { logSocByIris } = await applyLogSoc(afterDVF, criteria?.filosofi);
+    const { prixMedianByIris } = await applyPrixMedian(afterDVF, criteria?.prixMedianM2);
+    const { ecolesByIris } = await applyEcolesRadius(afterDVF, criteria?.ecoles);
+    const { collegesByIris } = await applyColleges(afterDVF, criteria?.colleges);
+    const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(afterDVF);
+    const { crechesByIris } = await applyCreches(afterDVF, criteria?.creches);
 
-  // Requête pour récupérer commune et département
-  const sqlCom = `
-    SELECT i.code_iris,
-           COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_com,
-           c.nom AS nom_com,
-           c.insee_dep AS code_dep,
-           d.nom AS nom_dep
-    FROM decoupages.iris_grandeetendue_2022 i
-    JOIN decoupages.communes c
-         ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
-    JOIN decoupages.departements d
-         ON c.insee_dep = d.insee_dep
-    WHERE i.code_iris = ANY($1)
-  `;
-  const comRes = await pool.query(sqlCom, [afterDVF]);
+    // Requête pour récupérer commune et département
+    const sqlCom = `
+      SELECT i.code_iris,
+             COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_com,
+             c.nom AS nom_com,
+             c.insee_dep AS code_dep,
+             d.nom_dep AS nom_dep
+      FROM decoupages.iris_grandeetendue_2022 i
+      JOIN decoupages.communes c
+           ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+      JOIN decoupages.departements d
+           ON c.insee_dep = d.insee_dep
+      WHERE i.code_iris = ANY($1)
+    `;
+    console.log('Executing sqlCom with iris count:', afterDVF.length);
+    const comRes = await pool.query(sqlCom, [afterDVF]);
+    console.log('sqlCom result rows:', comRes.rows.length);
 
-  const communeByIris = {};
-  for (const row of comRes.rows) {
-    communeByIris[row.code_iris] = {
-      nom_commune: row.nom_com,
-      code_dep: row.code_dep,
-      nom_dep: row.nom_dep
-    };
+    const communeByIris = {};
+    for (const row of comRes.rows) {
+      communeByIris[row.code_iris] = {
+        nom_commune: row.nom_com,
+        code_dep: row.code_dep,
+        nom_dep: row.nom_dep
+      };
+    }
+
+    const irisFinalDetail = [];
+    for (const iris of afterDVF) {
+      const commune = communeByIris[iris] ?? {};
+      irisFinalDetail.push({
+        code_iris: iris,
+        nom_iris: irisNameByIris[iris] ?? null,
+        commune: {
+          nom_commune: commune.nom_commune ?? null,
+          nom_dep: commune.nom_dep ?? null,
+          code_dep: commune.code_dep ?? null
+        },
+        dvf_count: dvfCountByIris[iris] ?? 0,
+        dvf_count_total: dvfTotalByIris[iris] ?? 0,
+        mediane_rev_decl: revenusByIris[iris]?.mediane_rev_decl ?? null,
+        part_log_soc: logSocByIris[iris]?.part_log_soc ?? null,
+        securite: securiteByIris[iris]?.[0]?.note ?? null,
+        ecoles: ecolesByIris[iris] ?? [],
+        colleges: collegesByIris[iris] ?? [],
+        prix_median_m2: prixMedianByIris[iris] ?? null,
+        taux_creches: crechesByIris[iris] ?? null
+      });
+    }
+
+    console.timeEnd('buildIrisDetail');
+    return irisFinalDetail;
+  } catch (err) {
+    console.error('Error in buildIrisDetail:', err);
+    throw err;
   }
-
-  const irisFinalDetail = [];
-  for (const iris of afterDVF) {
-    const commune = communeByIris[iris] ?? {};
-    irisFinalDetail.push({
-      code_iris: iris,
-      nom_iris: irisNameByIris[iris] ?? null,
-      commune: {
-        nom_commune: commune.nom_commune ?? null,
-        nom_dep: commune.nom_dep ?? null,
-        code_dep: commune.code_dep ?? null
-      },
-      dvf_count: dvfCountByIris[iris] ?? 0,
-      dvf_count_total: dvfTotalByIris[iris] ?? 0,
-      mediane_rev_decl: revenusByIris[iris]?.mediane_rev_decl ?? null,
-      part_log_soc: logSocByIris[iris]?.part_log_soc ?? null,
-      securite: securiteByIris[iris]?.[0]?.note ?? null,
-      ecoles: ecolesByIris[iris] ?? [],
-      colleges: collegesByIris[iris] ?? [],
-      prix_median_m2: prixMedianByIris[iris] ?? null,
-      taux_creches: crechesByIris[iris] ?? null
-    });
-  }
-
-  return irisFinalDetail;
 }
 
 // ------------------------------------------------------------------
@@ -1185,10 +1194,13 @@ app.get('/iris_by_point', async (req, res) => {
 // PING
 // ------------------------------------------------------------------
 app.get('/ping', async (_req, res) => {
+  console.log('Received /ping request');
   try {
     await pool.query('SELECT 1');
+    console.log('Database query successful');
     res.json({ message: 'pong', db_status: 'ok', date: new Date() });
   } catch (e) {
+    console.error('Error in /ping:', e);
     res.status(500).json({ message: 'pong', db_status: 'error', error: e.message });
   }
 });
