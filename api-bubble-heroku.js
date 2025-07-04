@@ -1018,6 +1018,38 @@ app.post('/get_iris_filtre', async (req, res) => {
     /************  0.  LOCALISATION GÉNÉRIQUE  ****************/
     const { mode, codes_insee, center, radius_km, criteria = {} } = req.body;
 
+    // --------------------------------------------------------------
+    // [NOUVEAU] Détection de départements → remplacement par communes
+    // --------------------------------------------------------------
+
+    let codesInsee = body.codes_insee || [];
+
+    codesInsee = codesInsee.map(code => code?.toString());  // Force string
+
+    let communeCodes = [];
+    let departementCodes = [];
+
+    for (const code of codesInsee) {
+      if (code && code.length >= 2 && code.length <= 3 && code.length !== 5) {
+        departementCodes.push(code);
+      } else if (code && code.length === 5) {
+        communeCodes.push(code);
+      }
+    }
+
+    if (departementCodes.length > 0) {
+      console.log("→ Codes départements détectés :", departementCodes);
+      const resDeps = await pool.query(
+        `SELECT code_insee FROM decoupages.communes WHERE code_departement = ANY($1)`,
+        [departementCodes]
+      );
+      const communesFromDeps = resDeps.rows.map(r => r.code_insee);
+      communeCodes.push(...communesFromDeps);
+      console.log(`→ ${communesFromDeps.length} communes récupérées depuis départements`);
+    }
+
+    body.codes_insee = communeCodes;
+
     /************  0.bis  PARAMÉTRAGE RECHERCHE SANS LOCALISATION (CRITERIA-ONLY)  ****************/
     /* -----------------------------------------------------------
      *  RACCROCHAGE DIRECT : si Bubble envoie déjà une liste IRIS
