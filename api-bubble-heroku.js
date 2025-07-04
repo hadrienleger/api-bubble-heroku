@@ -114,7 +114,7 @@ function isLogSocActivated(ls) {
 }
 function isCollegesActivated(col) {
   if (!col) return false;
-  if (col.valeur_figaro_min != null || col.valeur_figaro_max != null) return true;
+  if (col.niveau_coll_min != null || col.niveau_coll_max != null) return true;
   return false;
 }
 function isEcolesActivated(ec) {
@@ -765,15 +765,15 @@ async function applyColleges(irisList, colCrit) {
   let idx = 2;
 
   let doIntersection = false;
-  if (colCrit && colCrit.valeur_figaro_min != null) {
+  if (colCrit && colCrit.niveau_coll_min != null) {
     wPivot.push(`note_figaro_sur_20 >= $${idx}`);
-    vals.push(colCrit.valeur_figaro_min);
+    vals.push(colCrit.niveau_coll_min);
     idx++;
     doIntersection = true;
   }
-  if (colCrit && colCrit.valeur_figaro_max != null) {
+  if (colCrit && colCrit.niveau_coll_max != null) {
     wPivot.push(`note_figaro_sur_20 <= $${idx}`);
-    vals.push(colCrit.valeur_figaro_max);
+    vals.push(colCrit.niveau_coll_max);
     idx++;
     doIntersection = true;
   }
