@@ -1017,8 +1017,10 @@ app.post('/get_iris_filtre', async (req, res) => {
   try {
     /************  0.  LOCALISATION GÉNÉRIQUE  ****************/
     const body = req.body;
-    const { mode, codes_insee, center, radius_km, criteria = {} } = req.body;
+const { mode, codes_insee: codesInseeOrig, center, radius_km, criteria = {} } = req.body;
 
+ // copie modifiable
+ let codesInsee = Array.isArray(codesInseeOrig) ? [...codesInseeOrig] : [];
     // --------------------------------------------------------------
     // [NOUVEAU] Détection de départements → remplacement par communes
     // --------------------------------------------------------------
@@ -1052,8 +1054,7 @@ communeCodes.push(...communesFromDeps);
 console.log(`→ ${communesFromDeps.length} communes récupérées depuis départements`);
 
 // ⚠️  on met à jour *aussi* la variable locale
-codes_insee      = communeCodes;
-body.codes_insee = communeCodes;
+codesInsee = communeCodes;
 }
 
     /************  0.bis  PARAMÉTRAGE RECHERCHE SANS LOCALISATION (CRITERIA-ONLY)  ****************/
@@ -1086,7 +1087,7 @@ await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, 'ra
     /* ---------- MODE 1 : collectivités ---------- */
     if (mode === 'collectivites') {
       const fakeParams = {
-        selected_localities: (codes_insee || []).map(c => ({
+        selected_localities: (codesInsee || []).map(c => ({
           code_insee:        c,
           type_collectivite: 'commune'    // valeur neutre, juste pour ré-utiliser la fonction
         }))
