@@ -832,14 +832,10 @@ function isCrechesActivated(cr) {
 }
 
 async function applyCreches(irisList, crechesCrit) {
-  if (!irisList.length) {
-    return { irisSet: [], crechesByIris: {} };
-  }
-  if (!isCrechesActivated(crechesCrit)) {
-    return { irisSet: irisList, crechesByIris: {} };
-  }
+  if (!irisList.length) return { irisSet: [], crechesByIris: {} };
 
-  const { min, max } = crechesCrit;
+  // 0. Valeurs par défaut quand l’utilisateur n’a fixé aucune borne
+  const { min = null, max = null } = crechesCrit || {};
 
   const sql = `
     SELECT i.code_iris,
@@ -847,10 +843,10 @@ async function applyCreches(irisList, crechesCrit) {
     FROM decoupages.iris_grandeetendue_2022 i
     LEFT JOIN decoupages.communes c
            ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
-    LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
-           ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
-    WHERE i.code_iris = ANY($1)
-      AND cr.annee = 2022
+LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
+       ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
+       AND cr.annee = 2022          -- condition déplacée dans le ON pour garder le left-join
+WHERE i.code_iris = ANY($1)
       AND ($2::numeric IS NULL OR cr.txcouv_eaje_com IS NULL OR cr.txcouv_eaje_com >= $2)
       AND ($3::numeric IS NULL OR cr.txcouv_eaje_com IS NULL OR cr.txcouv_eaje_com <= $3)
   `;
