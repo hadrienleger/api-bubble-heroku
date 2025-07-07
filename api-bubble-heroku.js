@@ -955,17 +955,41 @@ async function groupByCommunes(irisList, communesFinal) {
 async function buildIrisDetail(irisCodes, criteria = {}) {
   console.time('buildIrisDetail');
   try {
-    const { irisSet: afterDVF, dvfCountByIris } = await applyDVF(irisCodes, criteria?.dvf);
-    const dvfTotalByIris = await getDVFCountTotal(afterDVF);
-    const { revenusByIris } = await applyRevenus(afterDVF, criteria?.filosofi);
-    const { logSocByIris } = await applyLogSoc(afterDVF, criteria?.filosofi);
-    const { prixMedianByIris } = await applyPrixMedian(afterDVF, criteria?.prixMedianM2);
-    const { ecolesByIris } = await applyEcolesRadius(afterDVF, criteria?.ecoles);
-    const { collegesByIris } = await applyColleges(afterDVF, criteria?.colleges);
-    const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(afterDVF);
-    const { crechesByIris } = await applyCreches(afterDVF, criteria?.creches);
+ let irisSetCurrent = irisCodes;
 
-    // Requête pour récupérer commune et département
+    // Étape 1 : filtre DVF
+    const { irisSet: irisAfterDVF, dvfCountByIris } = await applyDVF(irisSetCurrent, criteria?.dvf);
+    irisSetCurrent = irisAfterDVF;
+    const dvfTotalByIris = await getDVFCountTotal(irisSetCurrent);
+
+    // Étape 2 : revenus
+    const { irisSet: irisAfterRevenus, revenusByIris } = await applyRevenus(irisSetCurrent, criteria?.filosofi);
+    irisSetCurrent = irisAfterRevenus;
+
+    // Étape 3 : logements sociaux
+    const { irisSet: irisAfterLogSoc, logSocByIris } = await applyLogSoc(irisSetCurrent, criteria?.filosofi);
+    irisSetCurrent = irisAfterLogSoc;
+
+    // Étape 4 : prix m²
+    const { irisSet: irisAfterPrix, prixMedianByIris } = await applyPrixMedian(irisSetCurrent, criteria?.prixMedianM2);
+    irisSetCurrent = irisAfterPrix;
+
+    // Étape 5 : écoles
+    const { irisSet: irisAfterEcoles, ecolesByIris } = await applyEcolesRadius(irisSetCurrent, criteria?.ecoles);
+    irisSetCurrent = irisAfterEcoles;
+
+    // Étape 6 : collèges
+    const { irisSet: irisAfterColleges, collegesByIris } = await applyColleges(irisSetCurrent, criteria?.colleges);
+    irisSetCurrent = irisAfterColleges;
+
+    // Étape 7 : crèches
+    const { irisSet: irisAfterCreches, crechesByIris } = await applyCreches(irisSetCurrent, criteria?.creches);
+    irisSetCurrent = irisAfterCreches;
+
+    // Étape 8 : sécurité (pas de filtrage, juste données descriptives)
+    const { securiteByIris, irisNameByIris } = await gatherSecuriteByIris(irisSetCurrent);
+
+    // Étape 9 : commune et département
     const sqlCom = `
       SELECT i.code_iris,
              COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_com,
