@@ -867,6 +867,40 @@ WHERE i.code_iris = ANY($1)
   };
 }
 
+// --------------------------------------------------------------
+// K) Filtrage des magasins bio (par score composite en fonction de la localisation dans et à proximité du quartier)
+// --------------------------------------------------------------
+async function applyScoreBio(irisList, sbCriteria = {}) {
+  if (!irisList.length) {
+    return { irisSet: [], scoreBioByIris: {} };
+  }
+
+  const { min, max } = sbCriteria;          // ex. {min:7, max:14}
+
+  const sql = `
+    SELECT code_iris, score_bio
+    FROM   equipements.iris_equip_2023
+    WHERE  code_iris = ANY($1)
+      AND ($2::numeric IS NULL OR score_bio >= $2)
+      AND ($3::numeric IS NULL OR score_bio <= $3)
+  `;
+  const { rows } = await pool.query(sql, [irisList, min, max]);
+
+  const map  = {};
+  const keep = new Set();
+  for (const r of rows) {
+    map[r.code_iris] = Number(r.score_bio);
+    keep.add(r.code_iris);
+  }
+
+  /* ⇒ si bornes vides, on ne filtre pas ; sinon on garde l’intersection */
+  const irisSet = (min == null && max == null)
+      ? irisList
+      : irisList.filter(ci => keep.has(ci));
+
+  return { irisSet, scoreBioByIris: map };
+}
+
 
 // --------------------------------------------------------------
 // K) gatherSecuByIris
@@ -990,6 +1024,11 @@ async function buildIrisDetail(irisCodes, criteria = {}) {
     irisCurrent           = crechesRes.irisSet;
     const crechesByIris   = crechesRes.crechesByIris;
 
+    /* 8️⃣  Magasins bio ---------------------------------------------- */
+    const sbRes          = await applyScoreBio(irisCurrent, criteria?.scoreBio);
+    irisCurrent          = sbRes.irisSet;
+    const scoreBioByIris = sbRes.scoreBioByIris;
+
     /* 8️⃣  Sécurité (pas de filtre, juste des infos) ------------ */
     const { securiteByIris, irisNameByIris } =
       await gatherSecuriteByIris(irisCurrent);      // :contentReference[oaicite:0]{index=0}
@@ -1036,7 +1075,8 @@ async function buildIrisDetail(irisCodes, criteria = {}) {
         ecoles           : ecolesByIris[iris]             ?? [],
         colleges         : collegesByIris[iris]           ?? [],
         prix_median_m2   : prixMedianByIris[iris]         ?? null,
-        taux_creches     : crechesByIris[iris]            ?? null
+        taux_creches     : crechesByIris[iris]            ?? null,
+        score_bio: scoreBioByIris[iris] ?? null
       };
     });
 
