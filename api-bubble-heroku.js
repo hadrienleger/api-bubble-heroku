@@ -1139,7 +1139,7 @@ app.post('/get_iris_filtre', async (req, res) => {
   try {
     const { mode, codes_insee, center, radius_km, criteria = {} } = req.body;
 
-    const equipCriteria = criteres.equipements || {};
+    const equipCriteria = criteria.equipements || {};
 
     if (Array.isArray(req.body.iris_base) && req.body.iris_base.length) {
       console.log(`🔄 Bypass localisation : ${req.body.iris_base.length} IRIS reçus`);
