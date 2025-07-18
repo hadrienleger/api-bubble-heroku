@@ -8,6 +8,18 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 
+/**  Préfixes d’équipements gérés  ------------------------------- */
+const EQUIP_PREFIXES = [
+  'boulang',   // boulangerie-pâtisserie
+  'bouche',    // commerces de bouche
+  'superm',    // super/hypermarchés
+  'epicerie',  // épiceries / supérettes
+  'lib',       // librairies
+  'cinema',    // cinémas
+  'conserv',   // conservatoires
+  'magbio'     // magasins bio
+];
+
 // ----------------------------------
 // Charger .env si on n'est pas en production
 // ----------------------------------
@@ -868,38 +880,47 @@ WHERE i.code_iris = ANY($1)
 }
 
 // --------------------------------------------------------------
-// K) Filtrage des magasins bio (par score composite en fonction de la localisation dans et à proximité du quartier)
+// K) Filtrage des équipements (par score composite en fonction de la localisation dans et à proximité du quartier)
 // --------------------------------------------------------------
-async function applyScoreBio(irisList, sbCriteria = {}) {
-  if (!irisList.length) {
-    return { irisSet: [], scoreBioByIris: {} };
+/**
+ * Filtre la liste d’IRIS sur la base d’un score d’équipement.
+ *   - prefix  : 'boulang', 'bouche', … (doit exister dans EQUIP_PREFIXES)
+ *   - criteria: {min: <num>|null, max: <num>|null}
+ */
+async function applyScoreEquip(irisList, prefix, criteria = {}) {
+  if (!irisList.length || !EQUIP_PREFIXES.includes(prefix)) {
+    return { irisSet: irisList, scoreByIris: {} };
   }
 
-  const { min, max } = sbCriteria;          // ex. {min:7, max:14}
+  const { min = null, max = null } = criteria;
+  const col = `${prefix}_score`;                       // ex. boulang_score
 
   const sql = `
-    SELECT code_iris, score_bio
-    FROM   equipements.iris_equip_2023
+    SELECT code_iris, ${col} AS score
+    FROM   equipements.iris_equip_2024
     WHERE  code_iris = ANY($1)
-      AND ($2::numeric IS NULL OR score_bio >= $2)
-      AND ($3::numeric IS NULL OR score_bio <= $3)
+      AND ($2::numeric IS NULL OR ${col} >= $2)
+      AND ($3::numeric IS NULL OR ${col} <= $3)
   `;
+
   const { rows } = await pool.query(sql, [irisList, min, max]);
 
-  const map  = {};
+  const scoreByIris = {};
   const keep = new Set();
   for (const r of rows) {
-    map[r.code_iris] = Number(r.score_bio);
+    scoreByIris[r.code_iris] = Number(r.score);
     keep.add(r.code_iris);
   }
 
-  /* ⇒ si bornes vides, on ne filtre pas ; sinon on garde l’intersection */
+  /*  – si aucune borne n’a été fixée → pas d’intersection
+      – sinon on conserve uniquement les IRIS qui satisfont la requête   */
   const irisSet = (min == null && max == null)
-      ? irisList
-      : irisList.filter(ci => keep.has(ci));
+        ? irisList
+        : irisList.filter(ci => keep.has(ci));
 
-  return { irisSet, scoreBioByIris: map };
+  return { irisSet, scoreByIris };
 }
+
 
 
 // --------------------------------------------------------------
@@ -1024,10 +1045,20 @@ async function buildIrisDetail(irisCodes, criteria = {}) {
     irisCurrent           = crechesRes.irisSet;
     const crechesByIris   = crechesRes.crechesByIris;
 
-    /* 8️⃣  Magasins bio ---------------------------------------------- */
-    const sbRes          = await applyScoreBio(irisCurrent, criteria?.scoreBio);
-    irisCurrent          = sbRes.irisSet;
-    const scoreBioByIris = sbRes.scoreBioByIris;
+    /* 8️⃣  Équipements (scores) ---------------------------------------------- */
+    let scoreEquipByIris = {};      // agrège tous les scores demandés
+
+    for (const prefix of EQUIP_PREFIXES) {
+      if (!equipCriteria[prefix]) continue;      // pas demandé par l’utilisateur
+
+      const res = await applyScoreEquip(irisCurrent, prefix, equipCriteria[prefix]);
+      irisCurrent           = res.irisSet;
+      scoreEquipByIris[prefix] = res.scoreByIris;
+
+      // Si plus aucun IRIS ne passe, inutile de poursuivre la boucle
+      if (!irisCurrent.length) break;
+    }
+
 
     /* 8️⃣  Sécurité (pas de filtre, juste des infos) ------------ */
     const { securiteByIris, irisNameByIris } =
@@ -1076,7 +1107,14 @@ async function buildIrisDetail(irisCodes, criteria = {}) {
         colleges         : collegesByIris[iris]           ?? [],
         prix_median_m2   : prixMedianByIris[iris]         ?? null,
         taux_creches     : crechesByIris[iris]            ?? null,
-        score_bio: scoreBioByIris[iris] ?? null
+        score_boulang  : scoreEquipByIris['boulang']?.[iris] ?? null,
+        score_bouche   : scoreEquipByIris['bouche']?.[iris]  ?? null,
+        score_superm   : scoreEquipByIris['superm']?.[iris]  ?? null,
+        score_epicerie : scoreEquipByIris['epicerie']?.[iris]?? null,
+        score_lib      : scoreEquipByIris['lib']?.[iris]     ?? null,
+        score_cinema   : scoreEquipByIris['cinema']?.[iris]  ?? null,
+        score_conserv  : scoreEquipByIris['conserv']?.[iris] ?? null,
+        score_magbio   : scoreEquipByIris['magbio']?.[iris]  ?? null,
       };
     });
 
@@ -1100,6 +1138,8 @@ app.post('/get_iris_filtre', async (req, res) => {
 
   try {
     const { mode, codes_insee, center, radius_km, criteria = {} } = req.body;
+
+    const equipCriteria = criteres.equipements || {};
 
     if (Array.isArray(req.body.iris_base) && req.body.iris_base.length) {
       console.log(`🔄 Bypass localisation : ${req.body.iris_base.length} IRIS reçus`);
