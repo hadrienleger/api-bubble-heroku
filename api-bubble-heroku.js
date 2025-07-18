@@ -1006,7 +1006,7 @@ async function groupByCommunes(irisList, communesFinal) {
 // ------------------------------------------------------------------
 // FONCTION COMMUNE : construit la fiche quartier complète
 // ------------------------------------------------------------------
-async function buildIrisDetail(irisCodes, criteria = {}) {
+async function buildIrisDetail(irisCodes, criteria = {}, equipCriteria = {}) {
   console.time('buildIrisDetail');
   try {
     /* 1️⃣  DVF --------------------------------------------------- */
@@ -1204,7 +1204,7 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
   }
 
   // Appeler buildIrisDetail pour obtenir les détails complets des IRIS
-  const irisFinalDetail = await buildIrisDetail(arrayIrisLoc, criteria);
+  const irisFinalDetail = await buildIrisDetail(arrayIrisLoc, criteria, equipCriteria);
 
   console.log('✅ Tous les filtres appliqués →', irisFinalDetail.length, 'IRIS');
   console.timeEnd('TOTAL /get_iris_filtre');
