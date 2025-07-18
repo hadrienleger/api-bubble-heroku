@@ -1203,6 +1203,8 @@ async function _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, crit
     return res.json({ nb_iris: 0, iris: [] });
   }
 
+const equipCriteria = criteria.equipements || {};
+
   // Appeler buildIrisDetail pour obtenir les détails complets des IRIS
   const irisFinalDetail = await buildIrisDetail(arrayIrisLoc, criteria, equipCriteria);
 
