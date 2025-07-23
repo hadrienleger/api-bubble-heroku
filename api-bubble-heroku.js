@@ -1053,16 +1053,31 @@ app.post('/get_iris_filtre', async (req, res) => {
     let communesFinal = [];
 
     if (mode === 'collectivites') {
-const sql = `
-  SELECT code_iris
-  FROM decoupages.iris_grandeetendue_2022
-  WHERE insee_com = ANY($1)
-`;
-const { rows } = await pool.query(sql, [codes_insee]);
-arrayIrisLoc = rows.map(r => r.code_iris);
+      // Convertir les codes INSEE (communes ou départements) en codes de communes
+      const selectedLocalities = (codes_insee || []).map(code => ({
+        code_insee: code,
+        type_collectivite: looksLikeDepartement(code) ? 'Département' : 'commune'
+      }));
+      console.log('Selected localities:', selectedLocalities);
 
+      communesFinal = await gatherCommuneCodes(selectedLocalities);
+      console.log('Communes after gatherCommuneCodes:', communesFinal);
+
+      if (communesFinal.length) {
+        const sql = `
+          SELECT code_iris
+          FROM decoupages.iris_grandeetendue_2022
+          WHERE insee_com = ANY($1)
+        `;
+        const { rows } = await pool.query(sql, [communesFinal]);
+        arrayIrisLoc = rows.map(r => r.code_iris);
+        console.log('IRIS found:', arrayIrisLoc.length);
+      }
     } else if (mode === 'rayon') {
       const { lon, lat } = center;
+      if (!lon || !lat) {
+        return res.status(400).json({ error: 'lon and lat are required for rayon mode' });
+      }
       const radius_m = Number(radius_km) * 1000;
       const sql = `
         SELECT code_iris
@@ -1081,11 +1096,12 @@ arrayIrisLoc = rows.map(r => r.code_iris);
     }
 
     if (!arrayIrisLoc.length) {
+      console.log('No IRIS found for the given criteria');
       console.timeEnd('TOTAL /get_iris_filtre');
       return res.json({ nb_iris: 0, iris: [] });
     }
 
-console.log('📬 _applyAllFiltersAndRespond() CALLED');
+    console.log('📬 _applyAllFiltersAndRespond() CALLED');
     await _applyAllFiltersAndRespond(res, arrayIrisLoc, communesFinal, criteria, mode);
     return;
 
