@@ -957,9 +957,12 @@ async function buildIrisDetail(irisCodes, criteria = {}, equipCriteria = {}) {
     }
 
 
-    /* 8️⃣  Sécurité (pas de filtre, juste des infos) ------------ */
-    const { securiteByIris, irisNameByIris } =
-      await gatherSecuriteByIris(irisCurrent);      // :contentReference[oaicite:0]{index=0}
+    /* 8️⃣  Sécurité  ------------ */
+    const secRes          = await applySecurite(irisCurrent, criteria?.securite);
+    irisCurrent           = secRes.irisSet;          // ← coupe la liste
+    const securiteByIris  = secRes.securiteByIris;   // ← mémorise les notes
+  /* ➡️  Compléter avec les noms d’IRIS */
+  const { irisNameByIris } = await gatherSecuriteByIris(irisCurrent);
 
     /* 9️⃣  Commune & département -------------------------------- */
     const sqlCom = `
