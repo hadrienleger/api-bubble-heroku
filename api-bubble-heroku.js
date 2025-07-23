@@ -222,101 +222,6 @@ async function gatherCommuneCodes(selectedLocalities) {
 }
 
 // --------------------------------------------------------------
-// D) getIrisLocalisationAndSecurite  (version avec pré-filtre)
-// --------------------------------------------------------------
-async function getIrisLocalisationAndSecurite(params, criteriaCommune = {}) {
-  console.time('A) localiser + pré-filtrer communes');
-
-/* 1. Constituer la liste des codes INSEE de communes */
-let communesSelection = [];
-
-// a) cas « collectivites » (tableau d’objets)
-if (Array.isArray(params.selected_localities) &&
-    params.selected_localities.length) {
-  // transforme les objets → array de strings grâce à ta fonction utilitaire
-  communesSelection = await gatherCommuneCodes(params.selected_localities);
-
-// b) cas « codes_insee » (tableau déjà de strings)
-} else if (Array.isArray(params.codes_insee) &&
-           params.codes_insee.length) {
-  communesSelection = params.codes_insee;
-}
-
-// ► Si toujours vide : on sort
-if (!communesSelection.length) {
-  console.timeEnd('A) localiser + pré-filtrer communes');
-  return { arrayIrisLoc: [], communesFinal: [] };
-}
-
-
-  /* 2. Chargement des indicateurs Sécurité + Crèches pour ces communes */
-  const sql = `
-    SELECT c.insee_com,
-           COALESCE(NULLIF(c.insee_arm, ''), c.insee_com) AS insee_target,
-           d.note_sur_20,
-           cr.txcouv_eaje_com
-    FROM decoupages.communes c
-LEFT JOIN delinquance.notes_insecurite_geom_simplifie d
-  ON d.insee_com = c.insee_com
-    LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
-           ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
-    WHERE (c.insee_com = ANY($1) OR c.insee_arm = ANY($1))
-    AND cr.annee = 2022
-  `;
-  const { rows } = await pool.query(sql, [communesSelection]);
-
-  /* 3. Applique les bornes de filtre (sécurité + crèches).
-        Si la commune n’a pas de donnée (NULL), on la garde. */
-  let communesFiltrees = rows;
-
-  // --- critère Sécurité ---
-  if (criteriaCommune?.securite?.min != null) {
-    communesFiltrees = communesFiltrees.filter(r =>
-      r.note_sur_20 == null || r.note_sur_20 >= criteriaCommune.securite.min
-    );
-  }
-  if (criteriaCommune?.securite?.max != null) {
-    communesFiltrees = communesFiltrees.filter(r =>
-      r.note_sur_20 == null || r.note_sur_20 <= criteriaCommune.securite.max
-    );
-  }
-
-  // --- critère Crèches ---
-  if (criteriaCommune?.creches?.min != null) {
-    communesFiltrees = communesFiltrees.filter(r =>
-      r.txcouv_eaje_com == null || r.txcouv_eaje_com >= criteriaCommune.creches.min
-    );
-  }
-  if (criteriaCommune?.creches?.max != null) {
-    communesFiltrees = communesFiltrees.filter(r =>
-      r.txcouv_eaje_com == null || r.txcouv_eaje_com <= criteriaCommune.creches.max
-    );
-  }
-
-  /* 4. On garde la clé cible (arrondissement si présent) */
-  const codesFinal = communesFiltrees.map(r => r.insee_target);
-  if (!codesFinal.length) {
-    console.timeEnd('A) localiser + pré-filtrer communes');
-    return { arrayIrisLoc: [], communesFinal: [] };
-  }
-
-  /* 5. Tous les IRIS appartenant à ces communes */
-  const sqlIris = `
-    SELECT code_iris
-    FROM decoupages.iris_grandeetendue_2022
-    WHERE insee_com = ANY($1)
-  `;
-  const { rows: irisRows } = await pool.query(sqlIris, [codesFinal]);
-
-  console.timeEnd('A) localiser + pré-filtrer communes');
-  return {
-    arrayIrisLoc : irisRows.map(r => r.code_iris),
-    communesFinal: codesFinal
-  };
-}
-
-
-// --------------------------------------------------------------
 // D) Filtrage DVF
 // --------------------------------------------------------------
 async function getDVFCountTotal(irisList) {
@@ -1143,15 +1048,14 @@ app.post('/get_iris_filtre', async (req, res) => {
     let communesFinal = [];
 
     if (mode === 'collectivites') {
-      const fakeParams = {
-        selected_localities: (codes_insee || []).map(c => ({
-          code_insee: c,
-          type_collectivite: 'commune'
-        }))
-      };
-      const r = await getIrisLocalisationAndSecurite(fakeParams, criteria);
-      arrayIrisLoc = r.arrayIrisLoc;
-      communesFinal = r.communesFinal;
+const sql = `
+  SELECT code_iris
+  FROM decoupages.iris_grandeetendue_2022
+  WHERE insee_com = ANY($1)
+`;
+const { rows } = await pool.query(sql, [codes_insee]);
+arrayIrisLoc = rows.map(r => r.code_iris);
+
     } else if (mode === 'rayon') {
       const { lon, lat } = center;
       const radius_m = Number(radius_km) * 1000;
