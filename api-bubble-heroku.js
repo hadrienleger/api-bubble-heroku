@@ -259,8 +259,8 @@ if (!communesSelection.length) {
            d.note_sur_20,
            cr.txcouv_eaje_com
     FROM decoupages.communes c
-    LEFT JOIN delinquance.notes_insecurite_geom_complet d
-           ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
+LEFT JOIN delinquance.notes_insecurite_geom_simplifie d
+  ON d.insee_com = c.insee_com
     LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
            ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
     WHERE (c.insee_com = ANY($1) OR c.insee_arm = ANY($1))
@@ -631,8 +631,8 @@ async function applySecurite(irisList, secCrit) {
     FROM decoupages.iris_grandeetendue_2022 i
     LEFT JOIN decoupages.communes c
            ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
-    LEFT JOIN delinquance.notes_insecurite_geom_complet d
-           ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
+LEFT JOIN delinquance.notes_insecurite_geom_simplifie d
+  ON d.insee_com = c.insee_com
     WHERE i.code_iris = ANY($1)
       AND ( $2::numeric IS NULL OR d.note_sur_20 IS NULL OR d.note_sur_20 >= $2 )
       AND ( $3::numeric IS NULL OR d.note_sur_20 IS NULL OR d.note_sur_20 <= $3 )
@@ -939,8 +939,8 @@ async function gatherSecuriteByIris(irisList) {
     FROM decoupages.iris_grandeetendue_2022 i
     LEFT JOIN decoupages.communes c
            ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
-    LEFT JOIN delinquance.notes_insecurite_geom_complet d
-           ON (d.insee_com = c.insee_com OR d.insee_com = c.insee_arm)
+    LEFT JOIN delinquance.notes_insecurite_geom_simplifie d
+      ON d.insee_com = c.insee_com
     WHERE i.code_iris = ANY($1)
   `;
   let r = await pool.query(q, [irisList]);
