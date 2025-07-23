@@ -222,9 +222,6 @@ async function gatherCommuneCodes(selectedLocalities) {
 }
 
 // --------------------------------------------------------------
-// D) getIrisLocalisationAndSecurite
-// --------------------------------------------------------------
-// --------------------------------------------------------------
 // D) getIrisLocalisationAndSecurite  (version avec pré-filtre)
 // --------------------------------------------------------------
 async function getIrisLocalisationAndSecurite(params, criteriaCommune = {}) {
@@ -625,27 +622,22 @@ async function applySecurite(irisList, secCrit) {
       - ≥ min  (si min renseigné)
       - ≤ max  (si max renseigné)
       - ou NULL (=> la note “passe”, comme les autres critères)                     */
-  const sql = `
-    SELECT i.code_iris,
-           d.note_sur_20
-    FROM decoupages.iris_grandeetendue_2022 i
-    LEFT JOIN decoupages.communes c
-           ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
-LEFT JOIN delinquance.notes_insecurite_geom_simplifie d
-  ON d.insee_com = c.insee_com
-    WHERE i.code_iris = ANY($1)
-      AND ( $2::numeric IS NULL OR d.note_sur_20 IS NULL OR d.note_sur_20 >= $2 )
-      AND ( $3::numeric IS NULL OR d.note_sur_20 IS NULL OR d.note_sur_20 <= $3 )
-  `;
-  const { rows } = await pool.query(sql, [irisList, min, max]);
+const sql = `
+  SELECT code_iris, note_sur_20
+  FROM delinquance.iris_securite_2023
+  WHERE code_iris = ANY($1)
+    AND ($2::numeric IS NULL OR note_sur_20 IS NULL OR note_sur_20 >= $2)
+    AND ($3::numeric IS NULL OR note_sur_20 IS NULL OR note_sur_20 <= $3)
+`;
+const { rows } = await pool.query(sql, [irisList, min, max]);
 
-  const securiteByIris = {};
-  const irisOK = [];
-  for (const r of rows) {
-    securiteByIris[r.code_iris] = [{ note: r.note_sur_20 !== null ? Number(r.note_sur_20) : null }];
-    irisOK.push(r.code_iris);
-  }
-  return { irisSet: irisOK, securiteByIris };
+const securiteByIris = {};
+const irisOK = [];
+for (const r of rows) {
+  securiteByIris[r.code_iris] = [{ note: r.note_sur_20 !== null ? Number(r.note_sur_20) : null }];
+  irisOK.push(r.code_iris);
+}
+return { irisSet: irisOK, securiteByIris };
 }
 
 // --------------------------------------------------------------
@@ -935,12 +927,10 @@ async function gatherSecuriteByIris(irisList) {
   const q = `
     SELECT i.code_iris,
            i.nom_iris,
-           d.note_sur_20
+           s.note_sur_20
     FROM decoupages.iris_grandeetendue_2022 i
-    LEFT JOIN decoupages.communes c
-           ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
-    LEFT JOIN delinquance.notes_insecurite_geom_simplifie d
-      ON d.insee_com = c.insee_com
+    LEFT JOIN delinquance.iris_securite_2023 s
+           ON s.code_iris = i.code_iris
     WHERE i.code_iris = ANY($1)
   `;
   let r = await pool.query(q, [irisList]);
