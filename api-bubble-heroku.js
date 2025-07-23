@@ -531,8 +531,13 @@ const sql = `
   SELECT code_iris, note_sur_20
   FROM delinquance.iris_securite_2023
   WHERE code_iris = ANY($1)
-    AND ($2::numeric IS NULL OR note_sur_20 IS NULL OR note_sur_20 >= $2)
-    AND ($3::numeric IS NULL OR note_sur_20 IS NULL OR note_sur_20 <= $3)
+    AND (
+      note_sur_20 IS NULL
+      OR (
+        ($2::numeric IS NULL OR note_sur_20 >= $2)
+        AND ($3::numeric IS NULL OR note_sur_20 <= $3)
+      )
+    )
 `;
 const { rows } = await pool.query(sql, [irisList, min, max]);
 
