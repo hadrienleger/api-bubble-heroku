@@ -987,9 +987,38 @@ async function buildIrisDetail(irisCodes, criteria = {}, equipCriteria = {}) {
       };
     }
 
+    /* 9️⃣ bis  BBOX des IRIS */
+    console.time('BBOX query');
+const bboxSql = `
+  WITH sel AS (SELECT unnest($1::text[]) AS code_iris)
+  SELECT s.code_iris,
+         ST_XMin(g) AS west,
+         ST_YMin(g) AS south,
+         ST_XMax(g) AS east,
+         ST_YMax(g) AS north
+  FROM sel
+  JOIN LATERAL (
+    SELECT ST_Transform(geom_2154,4326) AS g
+    FROM decoupages.iris_grandeetendue_2022
+    WHERE code_iris = sel.code_iris
+    LIMIT 1
+  ) sub ON true
+`;
+const { rows: bboxRows } = await pool.query(bboxSql, [irisCurrent]);
+console.timeEnd('BBOX query');
+
+const bboxByIris = {};
+for (const b of bboxRows) {
+  bboxByIris[b.code_iris] = [Number(b.west), Number(b.south),
+                             Number(b.east), Number(b.north)];
+}
+
+
     /* 🔟  Assemblage de la réponse finale ----------------------- */
     const irisFinalDetail = irisCurrent.map(iris => {
       const commune = communeByIris[iris] ?? {};
+      const bbox    = bboxByIris[iris]    ?? [null,null,null,null];
+
       return {
         code_iris        : iris,
         nom_iris         : irisNameByIris[iris]           ?? null,
@@ -1015,6 +1044,10 @@ async function buildIrisDetail(irisCodes, criteria = {}, equipCriteria = {}) {
         score_cinema   : scoreEquipByIris['cinema']?.[iris]  ?? null,
         score_conserv  : scoreEquipByIris['conserv']?.[iris] ?? null,
         score_magbio   : scoreEquipByIris['magbio']?.[iris]  ?? null,
+            bbox_w : bbox[0],
+    bbox_s : bbox[1],
+    bbox_e : bbox[2],
+    bbox_n : bbox[3]
       };
     });
 
