@@ -1164,6 +1164,56 @@ const equipCriteria = criteria.equipements || {};
   });
 }
 
+// ------------------------------------------------------------------
+// NOUVEAU ENDPOINT
+// GET /iris/:code/bbox
+// Retourne le bbox d'un IRIS spécifique
+// ------------------------------------------------------------------
+app.get('/iris/:code/bbox', async (req, res) => {
+  const { code } = req.params;
+  
+  if (!code) {
+    return res.status(400).json({ error: 'Code IRIS requis' });
+  }
+
+  try {
+    const sql = `
+      SELECT 
+        ST_XMin(ST_Transform(geom_2154, 4326)) AS west,
+        ST_YMin(ST_Transform(geom_2154, 4326)) AS south,
+        ST_XMax(ST_Transform(geom_2154, 4326)) AS east,
+        ST_YMax(ST_Transform(geom_2154, 4326)) AS north,
+        nom_iris
+      FROM decoupages.iris_petiteetendue_2022
+      WHERE code_iris = $1
+      LIMIT 1
+    `;
+    
+    const result = await pool.query(sql, [code]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'IRIS non trouvé' });
+    }
+    
+    const row = result.rows[0];
+    
+    res.json({
+      code_iris: code,
+      nom_iris: row.nom_iris,
+      bbox: [
+        Number(row.west),
+        Number(row.south),
+        Number(row.east),
+        Number(row.north)
+      ]
+    });
+    
+  } catch (err) {
+    console.error('Erreur /iris/:code/bbox :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 
 // ------------------------------------------------------------------
 // NOUVEAU ENDPOINT : GET /iris_by_point?lat=...&lon=...
