@@ -991,7 +991,7 @@ async function buildIrisDetail(irisCodes, criteria = {}, equipCriteria = {}) {
     console.time('BBOX query');
 const bboxSql = `
   WITH sel AS (SELECT unnest($1::text[]) AS code_iris)
-  SELECT s.code_iris,
+  SELECT sel.code_iris,
          ST_XMin(g) AS west,
          ST_YMin(g) AS south,
          ST_XMax(g) AS east,
