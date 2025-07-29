@@ -567,10 +567,13 @@ async function applyEcolesRadius(irisList, ec) {
 
   const filteringActive = (ips_min !== null || ips_max !== null);
 
-   const rawSecs = Array.isArray(secteurs) ? secteurs.filter(x => x) : null;
-   const secs    = rawSecs && rawSecs.length ? rawSecs
-                   : secteur ? [secteur]      // accepte l’ancien champ singulier
-                   : ['PU','PR'];
+ const { ips_min, ips_max, rayon,
+         secteurs = null,         // tableau éventuel
+         secteur  = null } = ec;  // ancien champ singulier
+
+ const rawSecs = Array.isArray(secteurs) ? secteurs.filter(Boolean)
+               : (secteur ? [secteur] : null);
+ const secs    = (rawSecs && rawSecs.length) ? rawSecs : ['PU', 'PR'];
 
   /* ---------- 2. build requête ---------- */
   let p = 1, vals = [irisList, rayon, secs];
