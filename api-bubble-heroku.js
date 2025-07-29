@@ -550,40 +550,38 @@ return { irisSet: irisOK, securiteByIris };
 // --------------------------------------------------------------
 // H) Critère partiel Écoles (IPS + rayon + secteur)
 // --------------------------------------------------------------
+// --------------------------------------------------------------
+// H) Critère partiel Écoles (toujours 300 m par défaut,
+//     filtrage IPS/rayon/secteur seulement si l’utilisateur l’active)
+// --------------------------------------------------------------
 async function applyEcolesRadius(irisList, ec) {
 
-  /* ---------- 1. Valeurs par défaut et détection du filtrage ---------- */
+  /* 1.  Valeurs par défaut + détection du filtrage explicite */
   ec = ec || {};
 
-  // ↪︎ rayon : 300 m par défaut si rien n’est précisé
-  const rayon       = ec.rayon ?? 300;
-  const ips_min     = ec.ips_min ?? null;
-  const ips_max     = ec.ips_max ?? null;
+  const rayon   = ec.rayon   ?? 300;          // 300 m si rien n’est précisé
+  const ips_min = ec.ips_min ?? null;
+  const ips_max = ec.ips_max ?? null;
 
-  // plusieurs secteurs possibles ; défaut = ['PU','PR']
-  const secteursArr = ec.secteurs && ec.secteurs.length
-                      ? ec.secteurs.filter(x => x)
-                      : ['PU','PR'];
+  // tableau de secteurs : ["PU"], ["PR"] ou ["PU","PR"] (défaut)
+  const secteursArr = Array.isArray(ec.secteurs) && ec.secteurs.length
+                        ? ec.secteurs.filter(Boolean)
+                        : ec.secteur ? [ec.secteur]     // ancien champ singulier accepté
+                        : ['PU','PR'];
 
-  const filteringActive = (ips_min !== null || ips_max !== null);
+  const filteringActive =
+        (ips_min !== null || ips_max !== null || ec.rayon !== undefined || ec.secteurs || ec.secteur);
 
- const { ips_min, ips_max, rayon,
-         secteurs = null,         // tableau éventuel
-         secteur  = null } = ec;  // ancien champ singulier
-
- const rawSecs = Array.isArray(secteurs) ? secteurs.filter(Boolean)
-               : (secteur ? [secteur] : null);
- const secs    = (rawSecs && rawSecs.length) ? rawSecs : ['PU', 'PR'];
-
-  /* ---------- 2. build requête ---------- */
-  let p = 1, vals = [irisList, rayon, secs];
+  /* 2.  Construction de la requête */
+  let p = 1;
+  const vals  = [irisList, rayon, secteursArr];
   const where = [
     `code_iris = ANY($${p++})`,
     `rayon     = $${p++}`,
     `secteur   = ANY($${p++})`
   ];
-  if (ips_min != null) { where.push(`ips >= $${p}`); vals.push(ips_min); p++; }
-  if (ips_max != null) { where.push(`ips <= $${p}`); vals.push(ips_max); p++; }
+  if (ips_min !== null) { where.push(`ips >= $${p}`); vals.push(ips_min); p++; }
+  if (ips_max !== null) { where.push(`ips <= $${p}`); vals.push(ips_max); p++; }
 
   const sql = `
     SELECT p.code_iris,
@@ -600,18 +598,16 @@ async function applyEcolesRadius(irisList, ec) {
     WHERE  ${where.join(' AND ')}
   `;
 
-  /* ---------- 3. exécution ---------- */
+  /* 3. Exécution */
   const { rows } = await pool.query(sql, vals);
 
-  /* ---------- 4. post-traitement en mémoire ---------- */
-  const irisOK        = new Set();
-  const ecolesByIris  = {};
+  /* 4. Agrégation en mémoire */
+  const irisOK       = new Set();
+  const ecolesByIris = {};
 
   for (const r of rows) {
     irisOK.add(r.code_iris);
-
     if (!ecolesByIris[r.code_iris]) ecolesByIris[r.code_iris] = [];
-
     ecolesByIris[r.code_iris].push({
       code_rne   : r.code_rne,
       ips        : Number(r.ips),
@@ -623,23 +619,14 @@ async function applyEcolesRadius(irisList, ec) {
     });
   }
 
-  /* ---------- 5. retourner l’objet attendu ---------- */
-  return {
-    irisSet     : Array.from(irisOK),   // liste des IRIS qui passent le filtre
-    ecolesByIris: ecolesByIris          // détail par IRIS
-  };
-
-  /* --------------------------------------------
-     – Si l’utilisateur a fixé des bornes IPS ⇒
-       on intersecte (filtrage).
-     – Sinon ⇒ on conserve tous les IRIS initiaux,
-       on a simplement enrichi la réponse.     */
-
+  /* 5. Jeu d’IRIS final :
+        – si filtrage actif  ⇒ intersection
+        – sinon              ⇒ liste initiale inchangée */
   const irisSet = filteringActive ? Array.from(irisOK) : irisList;
 
   return { irisSet, ecolesByIris };
-
 }
+
 
 
 
