@@ -548,18 +548,14 @@ return { irisSet: irisOK, securiteByIris };
 }
 
 // --------------------------------------------------------------
-// H) Critère partiel Écoles (IPS + rayon + secteur)
-// --------------------------------------------------------------
-// --------------------------------------------------------------
 // H) Critère partiel Écoles (toujours 300 m par défaut,
 //     filtrage IPS/rayon/secteur seulement si l’utilisateur l’active)
 // --------------------------------------------------------------
 async function applyEcolesRadius(irisList, ec) {
-
   /* 1.  Valeurs par défaut + détection du filtrage explicite */
   ec = ec || {};
 
-  const rayon   = ec.rayon   ?? 300;          // 300 m si rien n’est précisé
+  const rayon   = ec.rayon   ?? 300;          // 300 m si rien n'est précisé
   const ips_min = ec.ips_min ?? null;
   const ips_max = ec.ips_max ?? null;
 
@@ -569,9 +565,9 @@ async function applyEcolesRadius(irisList, ec) {
                         : ec.secteur ? [ec.secteur]     // ancien champ singulier accepté
                         : ['PU','PR'];
 
- const filteringActive =
+  const filteringActive =
        (ips_min !== null || ips_max !== null ||
-        ec.rayon   != null ||                 // null ou undefined
+        ec.rayon   != null ||                 
         (Array.isArray(ec.secteurs) && ec.secteurs.some(Boolean)) ||
         ec.secteur);
 
@@ -608,6 +604,7 @@ async function applyEcolesRadius(irisList, ec) {
   const irisOK       = new Set();
   const ecolesByIris = {};
 
+  // IMPORTANT: On remplit ecolesByIris pour TOUS les IRIS de la requête
   for (const r of rows) {
     irisOK.add(r.code_iris);
     if (!ecolesByIris[r.code_iris]) ecolesByIris[r.code_iris] = [];
@@ -622,10 +619,23 @@ async function applyEcolesRadius(irisList, ec) {
     });
   }
 
-  /* 5. Jeu d’IRIS final :
-        – si filtrage actif  ⇒ intersection
-        – sinon              ⇒ liste initiale inchangée */
-  const irisSet = filteringActive ? Array.from(irisOK) : irisList;
+  /* 5. MODIFICATION IMPORTANTE ICI */
+  let irisSet;
+  if (filteringActive) {
+    // Si filtrage actif → intersection (on ne garde que les IRIS qui ont des écoles correspondantes)
+    irisSet = Array.from(irisOK);
+  } else {
+    // Si pas de filtrage → on garde tous les IRIS d'entrée
+    irisSet = irisList;
+    
+    // MAIS on s'assure que ecolesByIris contient bien les données pour tous les IRIS
+    // (même ceux qui n'ont pas d'écoles dans le rayon de 300m, ils auront un tableau vide)
+    for (const iris of irisList) {
+      if (!ecolesByIris[iris]) {
+        ecolesByIris[iris] = [];
+      }
+    }
+  }
 
   return { irisSet, ecolesByIris };
 }
