@@ -514,37 +514,44 @@ async function applyLogSoc(irisList, lsCriteria) {
 // G) Filtrage Sécurité (mode rayon) - VERSION DEBUG
 // -------------------------------------------------------------
 async function applySecurite(irisList, secCrit) {
-  if (!irisList.length || !secCrit) {        // rien à filtrer
+  if (!irisList.length) {
     return { irisSet: irisList, securiteByIris: {} };
   }
 
-  const { min, max } = secCrit;
-  if (min == null && max == null) {          // bornes vides => pas de filtre
-    return { irisSet: irisList, securiteByIris: {} };
+  const { min, max } = secCrit || {};
+  const hasFilter = min != null || max != null;
+
+  // Toujours récupérer TOUTES les notes
+  const sql = `
+    SELECT code_iris, note_sur_20
+    FROM delinquance.iris_securite_2023
+    WHERE code_iris = ANY($1)
+  `;
+  const { rows } = await pool.query(sql, [irisList]);
+
+  const securiteByIris = {};
+  const irisWithValidNotes = [];
+  
+  for (const r of rows) {
+    const note = r.note_sur_20 !== null ? Number(r.note_sur_20) : null;
+    securiteByIris[r.code_iris] = [{ note }];
+    
+    // Pour le filtrage, on ne garde que ceux qui respectent les bornes
+    if (!hasFilter || 
+        (note !== null && 
+         (min == null || note >= min) && 
+         (max == null || note <= max))) {
+      irisWithValidNotes.push(r.code_iris);
+    }
   }
 
-  /*  ▸  On garde tous les IRIS dont la note est
-      - ≥ min  (si min renseigné)
-      - ≤ max  (si max renseigné)
-      - ou NULL (=> la note “passe”, comme les autres critères)                     */
-const sql = `
-  SELECT code_iris, note_sur_20
-  FROM delinquance.iris_securite_2023
-  WHERE code_iris = ANY($1)
-    /* exclut les valeurs manquantes dès qu’une borne est demandée */
-    AND note_sur_20 IS NOT NULL
-    AND ($2::numeric IS NULL OR note_sur_20 >= $2)
-    AND ($3::numeric IS NULL OR note_sur_20 <= $3)
-`;
-const { rows } = await pool.query(sql, [irisList, min, max]);
+  // Si pas de filtre actif, on retourne tous les IRIS
+  // Si filtre actif, on ne retourne que ceux qui respectent les critères
+  const irisSet = hasFilter 
+    ? irisList.filter(ci => irisWithValidNotes.includes(ci))
+    : irisList;
 
-const securiteByIris = {};
-const irisOK = [];
-for (const r of rows) {
-  securiteByIris[r.code_iris] = [{ note: r.note_sur_20 !== null ? Number(r.note_sur_20) : null }];
-  irisOK.push(r.code_iris);
-}
-return { irisSet: irisOK, securiteByIris };
+  return { irisSet, securiteByIris };
 }
 
 // --------------------------------------------------------------
@@ -979,12 +986,16 @@ async function buildIrisDetail(irisCodes, criteria = {}, equipCriteria = {}) {
     }
 
 
-    /* 8️⃣  Sécurité  ------------ */
-    const secRes          = await applySecurite(irisCurrent, criteria?.securite);
-    irisCurrent           = secRes.irisSet;          // ← coupe la liste
-    const securiteByIris  = secRes.securiteByIris;   // ← mémorise les notes
-  /* ➡️  Compléter avec les noms d’IRIS */
+  /* 8️⃣  Sécurité  ------------ */
+  const secRes          = await applySecurite(irisCurrent, criteria?.securite);
+  irisCurrent           = secRes.irisSet;          
+  const securiteByIris  = secRes.securiteByIris;   // ← contient maintenant TOUTES les notes
+
+  /* ➡️  Compléter avec les noms d'IRIS */
   const { irisNameByIris } = await gatherSecuriteByIris(irisCurrent);
+  
+  // Fusionner les données : utiliser toutes les notes récupérées
+  securiteByIris = allSecuriteData;
 
     /* 9️⃣  Commune & département -------------------------------- */
     const sqlCom = `
