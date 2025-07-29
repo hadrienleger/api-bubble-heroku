@@ -989,13 +989,10 @@ async function buildIrisDetail(irisCodes, criteria = {}, equipCriteria = {}) {
   /* 8️⃣  Sécurité  ------------ */
   const secRes          = await applySecurite(irisCurrent, criteria?.securite);
   irisCurrent           = secRes.irisSet;          
-  const securiteByIris  = secRes.securiteByIris;   // ← contient maintenant TOUTES les notes
+  const securiteByIris  = secRes.securiteByIris;   // ← contient déjà TOUTES les notes
 
-  /* ➡️  Compléter avec les noms d'IRIS */
+  /* ➡️  Compléter avec les noms d'IRIS (PAS les notes, on les a déjà) */
   const { irisNameByIris } = await gatherSecuriteByIris(irisCurrent);
-  
-  // Fusionner les données : utiliser toutes les notes récupérées
-  securiteByIris = allSecuriteData;
 
     /* 9️⃣  Commune & département -------------------------------- */
     const sqlCom = `
