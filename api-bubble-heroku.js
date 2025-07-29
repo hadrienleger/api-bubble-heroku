@@ -569,8 +569,11 @@ async function applyEcolesRadius(irisList, ec) {
                         : ec.secteur ? [ec.secteur]     // ancien champ singulier accepté
                         : ['PU','PR'];
 
-  const filteringActive =
-        (ips_min !== null || ips_max !== null || ec.rayon !== undefined || ec.secteurs || ec.secteur);
+ const filteringActive =
+       (ips_min !== null || ips_max !== null ||
+        ec.rayon   != null ||                 // null ou undefined
+        (Array.isArray(ec.secteurs) && ec.secteurs.some(Boolean)) ||
+        ec.secteur);
 
   /* 2.  Construction de la requête */
   let p = 1;
