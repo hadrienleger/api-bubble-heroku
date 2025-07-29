@@ -552,20 +552,20 @@ return { irisSet: irisOK, securiteByIris };
 // --------------------------------------------------------------
 async function applyEcolesRadius(irisList, ec) {
 
-+  /* ---------- 1. Valeurs par défaut et détection du filtrage ---------- */
-+  ec = ec || {};
-+
-+  // ↪︎ rayon : 300 m par défaut si rien n’est précisé
-+  const rayon       = ec.rayon ?? 300;
-+  const ips_min     = ec.ips_min ?? null;
-+  const ips_max     = ec.ips_max ?? null;
-+
-+  // plusieurs secteurs possibles ; défaut = ['PU','PR']
-+  const secteursArr = ec.secteurs && ec.secteurs.length
-+                      ? ec.secteurs.filter(x => x)
-+                      : ['PU','PR'];
-+
-+  const filteringActive = (ips_min !== null || ips_max !== null);
+  /* ---------- 1. Valeurs par défaut et détection du filtrage ---------- */
+  ec = ec || {};
+
+  // ↪︎ rayon : 300 m par défaut si rien n’est précisé
+  const rayon       = ec.rayon ?? 300;
+  const ips_min     = ec.ips_min ?? null;
+  const ips_max     = ec.ips_max ?? null;
+
+  // plusieurs secteurs possibles ; défaut = ['PU','PR']
+  const secteursArr = ec.secteurs && ec.secteurs.length
+                      ? ec.secteurs.filter(x => x)
+                      : ['PU','PR'];
+
+  const filteringActive = (ips_min !== null || ips_max !== null);
 
    const rawSecs = Array.isArray(secteurs) ? secteurs.filter(x => x) : null;
    const secs    = rawSecs && rawSecs.length ? rawSecs
@@ -626,16 +626,16 @@ async function applyEcolesRadius(irisList, ec) {
     ecolesByIris: ecolesByIris          // détail par IRIS
   };
 
-+  /* --------------------------------------------
-+     – Si l’utilisateur a fixé des bornes IPS ⇒
-+       on intersecte (filtrage).
-+     – Sinon ⇒ on conserve tous les IRIS initiaux,
-+       on a simplement enrichi la réponse.     */
-+
-+  const irisSet = filteringActive ? Array.from(irisOK) : irisList;
-+
-+  return { irisSet, ecolesByIris };
-  
+  /* --------------------------------------------
+     – Si l’utilisateur a fixé des bornes IPS ⇒
+       on intersecte (filtrage).
+     – Sinon ⇒ on conserve tous les IRIS initiaux,
+       on a simplement enrichi la réponse.     */
+
+  const irisSet = filteringActive ? Array.from(irisOK) : irisList;
+
+  return { irisSet, ecolesByIris };
+
 }
 
 
