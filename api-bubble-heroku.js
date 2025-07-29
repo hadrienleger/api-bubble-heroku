@@ -552,14 +552,20 @@ return { irisSet: irisOK, securiteByIris };
 // --------------------------------------------------------------
 async function applyEcolesRadius(irisList, ec) {
 
-  /* ---------- 1. critère OFF ? ---------- */
-  /* critère absent OU totalement vide : on rend la liste telle quelle */
-  if (!ec ||
-      (ec.ips_min == null && ec.ips_max == null && ec.rayon == null)) {
-    return { irisSet: irisList, ecolesByIris: {} };
-  }
-
-  const { ips_min, ips_max, rayon, secteurs } = ec;
++  /* ---------- 1. Valeurs par défaut et détection du filtrage ---------- */
++  ec = ec || {};
++
++  // ↪︎ rayon : 300 m par défaut si rien n’est précisé
++  const rayon       = ec.rayon ?? 300;
++  const ips_min     = ec.ips_min ?? null;
++  const ips_max     = ec.ips_max ?? null;
++
++  // plusieurs secteurs possibles ; défaut = ['PU','PR']
++  const secteursArr = ec.secteurs && ec.secteurs.length
++                      ? ec.secteurs.filter(x => x)
++                      : ['PU','PR'];
++
++  const filteringActive = (ips_min !== null || ips_max !== null);
 
    const rawSecs = Array.isArray(secteurs) ? secteurs.filter(x => x) : null;
    const secs    = rawSecs && rawSecs.length ? rawSecs
@@ -619,6 +625,17 @@ async function applyEcolesRadius(irisList, ec) {
     irisSet     : Array.from(irisOK),   // liste des IRIS qui passent le filtre
     ecolesByIris: ecolesByIris          // détail par IRIS
   };
+
++  /* --------------------------------------------
++     – Si l’utilisateur a fixé des bornes IPS ⇒
++       on intersecte (filtrage).
++     – Sinon ⇒ on conserve tous les IRIS initiaux,
++       on a simplement enrichi la réponse.     */
++
++  const irisSet = filteringActive ? Array.from(irisOK) : irisList;
++
++  return { irisSet, ecolesByIris };
+  
 }
 
 
