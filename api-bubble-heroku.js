@@ -596,7 +596,7 @@ async function applyEcolesRadius(irisList, ec) {
            g.adresse_uai,
            g.code_postal_uai
     FROM   education_ecoles.iris_ecoles_ips_rayon_2025 AS p
-    JOIN   education.geoloc_etab_2025                 AS g
+    LEFT JOIN   education.geoloc_etab_2025                 AS g
            ON g.numero_uai = p.code_rne
     WHERE  ${where.join(' AND ')}
   `;
