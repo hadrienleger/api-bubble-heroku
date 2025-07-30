@@ -600,9 +600,9 @@ async function applyEcolesRadius(irisList, ec) {
     SELECT p.code_iris,
            p.code_rne,
            p.ips,
-           p.secteur,
            p.distance_m,
            g.patronyme_uai,
+           g.secteur_public_prive_libe,
            g.adresse_uai,
            g.code_postal_uai,
            g.libelle_commune        AS commune_nom
@@ -625,9 +625,9 @@ async function applyEcolesRadius(irisList, ec) {
     ecolesByIris[r.code_iris].push({
       code_rne   : r.code_rne,
       ips        : Number(r.ips),
-      secteur    : r.secteur,
       distance_m : r.distance_m,
       nom        : r.patronyme_uai,
+      secteur    : r.secteur_public_prive_libe,
       adresse    : r.adresse_uai,
       cp         : r.code_postal_uai,
       commune    : r.commune_nom
