@@ -602,7 +602,7 @@ async function applyEcolesRadius(irisList, ec) {
            p.ips,
            p.secteur,
            p.distance_m,
-           g.appellation_officielle,
+           g.patronyme_uai,
            g.adresse_uai,
            g.code_postal_uai,
            g.libelle_commune        AS commune_nom
@@ -627,7 +627,7 @@ async function applyEcolesRadius(irisList, ec) {
       ips        : Number(r.ips),
       secteur    : r.secteur,
       distance_m : r.distance_m,
-      nom        : r.appellation_officielle,
+      nom        : r.patronyme_uai,
       adresse    : r.adresse_uai,
       cp         : r.code_postal_uai,
       commune    : r.commune_nom
