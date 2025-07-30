@@ -490,7 +490,7 @@ async function applyLogSoc(irisList, lsCriteria) {
 
   let query = `
     SELECT code_iris, part_log_soc
-    FROM filosofi.logements_sociaux_iris_hl_2021
+    FROM filosofi.logsoc_iris_hl_2021
     WHERE ${whereClauses.join(' AND ')}
   `;
 
@@ -1347,8 +1347,6 @@ app.get('/iris/:code/ecoles', async (req, res) => {
   }
 });
 
-
-
 // ------------------------------------------------------------------
 // PING
 // ------------------------------------------------------------------
@@ -1361,6 +1359,48 @@ app.get('/ping', async (_req, res) => {
   } catch (e) {
     console.error('Error in /ping:', e);
     res.status(500).json({ message: 'pong', db_status: 'error', error: e.message });
+  }
+});
+
+// --------------------------------------------------------------------
+// ENDPOINT POUR RECUPERER LES INFOS SUR LES HLM A PARTIR DU CODE IRIS
+// --------------------------------------------------------------------
+app.get('/get_info_hlm/:code_iris', async (req, res) => {
+  try {
+    const code = req.params.code_iris;
+
+    const query = `
+      SELECT code_iris,
+             part_log_soc,
+             txlsplai,
+             txlsplus,
+             txlspls,
+             txlspli
+      FROM filosofi.logsoc_iris_hl_2021
+      WHERE code_iris = $1
+    `;
+
+    const result = await pool.query(query, [code]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'IRIS non trouvé' });
+    }
+
+    const row = result.rows[0];
+    const data = {
+      code_iris     : row.code_iris,
+      part_log_soc  : row.part_log_soc != null ? Number(row.part_log_soc) : null,
+      txlsplai      : row.txlsplai     != null ? Number(row.txlsplai)     : null,
+      txlsplus      : row.txlsplus     != null ? Number(row.txlsplus)     : null,
+      txlspls       : row.txlspls      != null ? Number(row.txlspls)      : null,
+      txlspli       : row.txlspli      != null ? Number(row.txlspli)      : null
+    };
+
+    return res.json(data);
+
+  } catch (err) {
+    console.error('Erreur dans /get_info_hlm/:code_iris:', err);
+    return res.status(500).json({ error: 'Erreur interne du serveur' });
   }
 });
 
