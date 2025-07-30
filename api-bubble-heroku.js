@@ -723,7 +723,7 @@ async function applyColleges(irisList, colCrit) {
 const sqlPivot = `
   SELECT p.code_iris,
          p.code_rne,
-         p.nom_college,
+         g.patronyme_uai,
          p.note_figaro_sur_20,
          g.adresse_uai,
          g.code_postal_uai,
@@ -744,7 +744,7 @@ const sqlPivot = `
     if (!mapCols[ci]) mapCols[ci] = [];
     mapCols[ci].push({
       code_rne: row.code_rne,
-      nom_college: row.nom_college,
+      nom_college: row.patronyme_uai,
       note_sur_20: Number(row.note_figaro_sur_20),
       adresse    : row.adresse_uai,
       cp         : row.code_postal_uai,
