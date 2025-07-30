@@ -720,13 +720,19 @@ async function applyColleges(irisList, colCrit) {
     doIntersection = true;
   }
 
-  const sqlPivot = `
-    SELECT code_iris, code_rne,
-           nom_college,
-           note_figaro_sur_20
-    FROM education_colleges.iris_rne_niveaux_2024
-    WHERE ${wPivot.join(' AND ')}
-  `;
+const sqlPivot = `
+  SELECT p.code_iris,
+         p.code_rne,
+         p.nom_college,
+         p.note_figaro_sur_20,
+         g.adresse_uai,
+         g.code_postal_uai,
+         g.libelle_commune AS commune_nom
+  FROM   education_colleges.iris_rne_niveaux_2024 AS p
+  LEFT JOIN education.geoloc_etab_2025            AS g
+         ON g.numero_uai = p.code_rne
+  WHERE  ${wPivot.join(' AND ')}
+`;
   let pivotRes = await pool.query(sqlPivot, vals);
   console.timeEnd('Colleges pivot');
 
@@ -739,7 +745,10 @@ async function applyColleges(irisList, colCrit) {
     mapCols[ci].push({
       code_rne: row.code_rne,
       nom_college: row.nom_college,
-      note_sur_20: Number(row.note_figaro_sur_20)
+      note_sur_20: Number(row.note_figaro_sur_20),
+      adresse    : row.adresse_uai,
+      cp         : row.code_postal_uai,
+      commune    : row.commune_nom
     });
   }
 
