@@ -605,13 +605,10 @@ async function applyEcolesRadius(irisList, ec) {
            g.appellation_officielle,
            g.adresse_uai,
            g.code_postal_uai,
-           c.nom AS commune_nom
+           g.libelle_commune        AS commune_nom
     FROM   education_ecoles.iris_ecoles_ips_rayon_2025 AS p
     LEFT JOIN   education.geoloc_etab_2025                 AS g
            ON g.numero_uai = p.code_rne
-    LEFT JOIN decoupages.communes                     AS c
-      ON ( c.insee_com = ge.code_insee_com
-        OR c.insee_arm = ge.code_insee_com )      -- Paris / Lyon / Marseille
     WHERE  ${where.join(' AND ')}
   `;
 
@@ -633,7 +630,7 @@ async function applyEcolesRadius(irisList, ec) {
       nom        : r.appellation_officielle,
       adresse    : r.adresse_uai,
       cp         : r.code_postal_uai,
-      commune  : r.commune_nom
+      commune    : r.commune_nom
     });
   }
 
