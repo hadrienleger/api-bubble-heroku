@@ -1312,6 +1312,31 @@ app.get('/iris_by_point', async (req, res) => {
   }
 });
 
+// -----------------------------------------------------------------------
+// PETIT ENDPOINT POUR RECUPERER LES ECOLES A PARTIR DE CODE IRIS ET RAYON
+// -----------------------------------------------------------------------
+app.get('/iris/:code/ecoles', async (req, res) => {
+  try {
+    const codeIris = req.params.code;
+    const rayon    = Number(req.query.rayon) || 300;   // fallback 300 m
+
+    // 1 ligne = 1 école dans le rayon demandé
+    const { ecolesByIris } = await applyEcolesRadius([codeIris], {
+      rayon,          // pas de filtrage IPS/secteur ici
+    });
+
+    res.json({
+      code_iris : codeIris,
+      rayon_m   : rayon,
+      ecoles    : ecolesByIris[codeIris] || []
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+
 
 // ------------------------------------------------------------------
 // PING
