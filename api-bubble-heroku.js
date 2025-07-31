@@ -1371,6 +1371,7 @@ app.get('/get_info_hlm/:code_iris', async (req, res) => {
 
     const query = `
       SELECT code_iris,
+             nblspls,
              part_log_soc,
              txlsplai,
              txlsplus,
@@ -1389,6 +1390,7 @@ app.get('/get_info_hlm/:code_iris', async (req, res) => {
     const row = result.rows[0];
     const data = {
       code_iris     : row.code_iris,
+      nblspls       : row.nblspls      != null ? Number(row.nblspls) : null,
       part_log_soc  : row.part_log_soc != null ? Number(row.part_log_soc) : null,
       txlsplai      : row.txlsplai     != null ? Number(row.txlsplai)     : null,
       txlsplus      : row.txlsplus     != null ? Number(row.txlsplus)     : null,
