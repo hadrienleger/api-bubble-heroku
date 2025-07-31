@@ -1406,6 +1406,39 @@ app.get('/get_info_hlm/:code_iris', async (req, res) => {
   }
 });
 
+/* -------------------------------------------------------------------
+ * ENDPOINT 1 : récupérer le nombre de commerces par type et par rayon
+ * ------------------------------------------------------------------ */
+app.get('/get_commerces_number/:code_iris', async (req, res) => {
+  const { code_iris } = req.params;
+  try {
+    const sql = `
+      SELECT *
+      FROM equipements.iris_equip_2024
+      WHERE code_iris = $1
+      LIMIT 1
+    `;
+    const { rows } = await pool.query(sql, [code_iris]);
+    if (!rows.length) return res.status(404).json({ error: 'IRIS inconnu' });
+
+    const row = rows[0];
+    const result = {};
+
+    for (const prefix of EQUIP_PREFIXES) {          // même constante qu’au début du fichier
+      result[prefix] = {
+        quartier : Number(row[`${prefix}_quartier`]  ?? 0),
+        r300     : Number(row[`${prefix}_300m`]      ?? 0),
+        r600     : Number(row[`${prefix}_600m`]      ?? 0),
+        r1000    : Number(row[`${prefix}_1000m`]     ?? 0)
+      };
+    }
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // ------------------------------------------------------------------
 // CENTROID (NOUVEAU ENDPOINT) - ABANDONNE MAIS JE LE GARDE AU CAS OÙ
 // ------------------------------------------------------------------
