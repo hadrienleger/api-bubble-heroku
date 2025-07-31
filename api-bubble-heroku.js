@@ -1406,9 +1406,9 @@ app.get('/get_info_hlm/:code_iris', async (req, res) => {
   }
 });
 
-/* -------------------------------------------------------------------
- * ENDPOINT 1 : récupérer le nombre de commerces par type et par rayon
- * ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------------------
+ * ENDPOINT COMMERCES 1 : récupérer le nombre de commerces par type et par rayon
+ * ------------------------------------------------------------------------------ */
 app.get('/get_commerces_number/:code_iris', async (req, res) => {
   const { code_iris } = req.params;
   try {
@@ -1438,6 +1438,63 @@ app.get('/get_commerces_number/:code_iris', async (req, res) => {
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
+
+/* -------------------------------------------------------------------------
+ * ENDPOINT COMMERCES 2 : liste des commerces d’un type dans un rayon donné
+ * ------------------------------------------------------------------------- */
+app.get('/get_commerces_list', async (req, res) => {
+  const { code_iris, type: prefix, rayon } = req.query;
+
+  // 1) validation
+  if (!code_iris || !prefix || !rayon)
+    return res.status(400).json({ error: 'Paramètres requis : code_iris, type, rayon' });
+  if (!EQUIP_PREFIXES.includes(prefix))
+    return res.status(400).json({ error: 'Type de commerce non supporté' });
+  if (!['quartier', '300', '600', '1000'].includes(rayon))
+    return res.status(400).json({ error: 'Rayon invalide' });
+
+  // 2) SQL runtime join
+  try {
+    const sql = `
+      WITH iris AS (
+        SELECT geom_2154
+        FROM decoupages.iris_grandeetendue_2022
+        WHERE code_iris = $1
+      ),
+      codes AS (
+        SELECT typequ_codes
+        FROM equipements.parametres
+        WHERE equip_prefix = $2
+      )
+      SELECT
+        TRIM(COALESCE(b.nomrs,'') || ' ' || COALESCE(b.cnomrs,'')) AS nom,
+        TRIM(
+          COALESCE(numvoie,'') || ' ' ||
+          COALESCE(indrep,'') || ' ' ||
+          COALESCE(typvoie,'') || ' ' ||
+          COALESCE(libvoie,'') || ' ' ||
+          COALESCE(cadr,'')    || ' ' ||
+          COALESCE(codpos,'')  || ' ' ||
+          COALESCE(libcom,'')
+        ) AS adresse
+      FROM equipements.base_2024 b, iris i, codes c
+      WHERE b.typequ = ANY(c.typequ_codes)
+        AND (
+              $3 = 'quartier' AND ST_Within(b.geom_2154, i.geom_2154)
+           OR $3 = '300'      AND ST_DWithin(b.geom_2154, i.geom_2154, 300)
+           OR $3 = '600'      AND ST_DWithin(b.geom_2154, i.geom_2154, 600)
+           OR $3 = '1000'     AND ST_DWithin(b.geom_2154, i.geom_2154, 1000)
+        )
+      ORDER BY nom;
+    `;
+    const { rows } = await pool.query(sql, [code_iris, prefix, rayon]);
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 
 // ------------------------------------------------------------------
 // CENTROID (NOUVEAU ENDPOINT) - ABANDONNE MAIS JE LE GARDE AU CAS OÙ
