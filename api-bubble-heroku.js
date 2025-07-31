@@ -1391,11 +1391,11 @@ app.get('/get_info_hlm/:code_iris', async (req, res) => {
     const data = {
       code_iris     : row.code_iris,
       nblspls       : row.nblspls      != null ? Number(row.nblspls) : null,
-      part_log_soc  : row.part_log_soc != null ? Number(row.part_log_soc) : null,
-      txlsplai      : row.txlsplai     != null ? Number(row.txlsplai)     : null,
-      txlsplus      : row.txlsplus     != null ? Number(row.txlsplus)     : null,
-      txlspls       : row.txlspls      != null ? Number(row.txlspls)      : null,
-      txlspli       : row.txlspli      != null ? Number(row.txlspli)      : null
+      part_log_soc  : row.part_log_soc != null ? Number(row.part_log_soc) / 100 : null, // ← Divisé par 100
+      txlsplai      : row.txlsplai     != null ? Number(row.txlsplai) / 100     : null, // ← Divisé par 100
+      txlsplus      : row.txlsplus     != null ? Number(row.txlsplus) / 100     : null, // ← Divisé par 100
+      txlspls       : row.txlspls      != null ? Number(row.txlspls) / 100      : null, // ← Divisé par 100
+      txlspli       : row.txlspli      != null ? Number(row.txlspli) / 100      : null  // ← Divisé par 100
     };
 
     return res.json(data);
