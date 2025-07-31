@@ -1450,7 +1450,7 @@ app.get('/get_commerces_list', async (req, res) => {
     return res.status(400).json({ error: 'Paramètres requis : code_iris, type, rayon' });
   if (!EQUIP_PREFIXES.includes(prefix))
     return res.status(400).json({ error: 'Type de commerce non supporté' });
-  if (!['quartier', '300', '600', '1000'].includes(rayon))
+  if (!['in_iris', '300', '600', '1000'].includes(rayon))
     return res.status(400).json({ error: 'Rayon invalide' });
 
   // 2) SQL runtime join
