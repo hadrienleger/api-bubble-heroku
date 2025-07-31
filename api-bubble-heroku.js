@@ -1426,7 +1426,7 @@ app.get('/get_commerces_number/:code_iris', async (req, res) => {
 
     for (const prefix of EQUIP_PREFIXES) {          // même constante qu’au début du fichier
       result[prefix] = {
-        quartier : Number(row[`${prefix}_quartier`]  ?? 0),
+        quartier : Number(row[`${prefix}_in_iris`]  ?? 0),
         r300     : Number(row[`${prefix}_300m`]      ?? 0),
         r600     : Number(row[`${prefix}_600m`]      ?? 0),
         r1000    : Number(row[`${prefix}_1000m`]     ?? 0)
