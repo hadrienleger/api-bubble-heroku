@@ -1480,7 +1480,7 @@ app.get('/get_commerces_list', async (req, res) => {
       FROM equipements.base_2024 b, iris i, codes c
       WHERE b.typequ = ANY(c.typequ_codes)
         AND (
-              $3 = 'quartier' AND ST_Within(b.geom_2154, i.geom_2154)
+              $3 = 'in_iris' AND ST_Within(b.geom_2154, i.geom_2154)
            OR $3 = '300'      AND ST_DWithin(b.geom_2154, i.geom_2154, 300)
            OR $3 = '600'      AND ST_DWithin(b.geom_2154, i.geom_2154, 600)
            OR $3 = '1000'     AND ST_DWithin(b.geom_2154, i.geom_2154, 1000)
