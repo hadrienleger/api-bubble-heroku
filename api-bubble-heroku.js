@@ -1474,7 +1474,7 @@ app.get('/get_commerces_list', async (req, res) => {
       if (rayon === 'in_iris') {
         sql = `
           SELECT
-            TRIM(COALESCE(raison_sociale::text, '') || ' ' || COALESCE(denomination::text, '')) AS nom,
+            TRIM(COALESCE(raison_sociale, '') || ' (' || COALESCE(denomination, '') || ')') AS nom,
             TRIM(
               COALESCE(addr_lieu::text, '') || ' ' ||
               COALESCE(addr_cp::text, '') || ' ' ||
@@ -1499,7 +1499,7 @@ app.get('/get_commerces_list', async (req, res) => {
             LIMIT 1
           )
           SELECT
-            TRIM(COALESCE(m.raison_sociale::text, '') || ' ' || COALESCE(m.denomination::text, '')) AS nom,
+            TRIM(COALESCE(m.raison_sociale, '') || ' (' || COALESCE(m.denomination, '') || ')') AS nom
             TRIM(
               COALESCE(m.addr_lieu::text, '') || ' ' ||
               COALESCE(m.addr_cp::text, '') || ' ' ||
