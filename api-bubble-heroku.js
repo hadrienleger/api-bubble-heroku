@@ -1439,9 +1439,7 @@ app.get('/get_commerces_number/:code_iris', async (req, res) => {
   }
 });
 
-/* -------------------------------------------------------------------------
- * ENDPOINT COMMERCES 2 : liste des commerces d’un type dans un rayon donné
- * ------------------------------------------------------------------------- */
+
 /* -------------------------------------------------------------------------
  * ENDPOINT COMMERCES 2 : liste des commerces d'un type dans un rayon donné
  * ------------------------------------------------------------------------- */
@@ -1461,49 +1459,53 @@ app.get('/get_commerces_list', async (req, res) => {
   let sql, params;
 
   try {
-    /* ----------------------------------------------------------------
-     * A. MAGASINS BIO - Debug simplifié
-     * ---------------------------------------------------------------- */
-    if (prefix === 'magbio') {
-      if (rayon === 'in_iris') {
-        /* --- Version simplifiée pour debug --- */
-        sql = `
-          SELECT
-            TRIM(raison_sociale, denomination) AS nom,
-            COALESCE(addr_ville, 'Sans ville') AS adresse
-          FROM equipements.magasins_bio_0725
-          WHERE code_iris = $1
-            AND cert_etat = 'ENGAGEE'
-          ORDER BY nom
-          LIMIT 50;
-        `;
-        params = [code_iris];
-
-      } else {
-        /* --- bio + rayon métrique --- */
-        const dist = parseInt(rayon, 10);
-        // D'abord, vérifions que l'IRIS existe
-        sql = `
-          -- Vérification de l'IRIS
-          WITH iris_check AS (
-            SELECT code_iris, geom_2154
-            FROM decoupages.iris_grandeetendue_2022
-            WHERE code_iris = $1
-            LIMIT 1
-          )
-          SELECT
-            COALESCE(m.raison_sociale, 'Sans nom') AS nom,
-            COALESCE(m.addr_ville, 'Sans ville') AS adresse
-          FROM equipements.magasins_bio_0725 m
-          CROSS JOIN iris_check i
-          WHERE m.cert_etat = 'ENGAGEE'
-            AND m.geom_2154 IS NOT NULL
-            AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
-          ORDER BY nom
-          LIMIT 50;
-        `;
-        params = [code_iris, dist];
-      }
+/* ----------------------------------------------------------------
+ * A. MAGASINS BIO
+ * ---------------------------------------------------------------- */
+if (prefix === 'magbio') {
+  if (rayon === 'in_iris') {
+    sql = `
+      SELECT
+        TRIM(COALESCE(raison_sociale, '') || ' ' || COALESCE(denomination, '')) AS nom,
+        TRIM(
+          COALESCE(addr_lieu, '') || ' ' ||
+          COALESCE(addr_cp, '') || ' ' ||
+          COALESCE(addr_ville, '')
+        ) AS adresse
+      FROM equipements.magasins_bio_0725
+      WHERE code_iris = $1
+        AND cert_etat = 'ENGAGEE'
+      ORDER BY nom
+      LIMIT 50;
+    `;
+    params = [code_iris];
+  } else {
+    const dist = parseInt(rayon, 10);
+    sql = `
+      -- Vérification de l'IRIS
+      WITH iris_check AS (
+        SELECT code_iris, geom_2154
+        FROM decoupages.iris_grandeetendue_2022
+        WHERE code_iris = $1
+        LIMIT 1
+      )
+      SELECT
+        TRIM(COALESCE(m.raison_sociale, '') || ' ' || COALESCE(m.denomination, '')) AS nom,
+        TRIM(
+          COALESCE(m.addr_lieu, '') || ' ' ||
+          COALESCE(m.addr_cp, '') || ' ' ||
+          COALESCE(m.addr_ville, '')
+        ) AS adresse
+      FROM equipements.magasins_bio_0725 m
+      CROSS JOIN iris_check i
+      WHERE m.cert_etat = 'ENGAGEE'
+        AND m.geom_2154 IS NOT NULL
+        AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
+      ORDER BY nom
+      LIMIT 50;
+    `;
+    params = [code_iris, dist];
+  }
 
     /* ----------------------------------------------------------------
      * B. AUTRES ÉQUIPEMENTS (base_2024)
