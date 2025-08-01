@@ -1443,86 +1443,131 @@ app.get('/get_commerces_number/:code_iris', async (req, res) => {
  * ENDPOINT COMMERCES 2 : liste des commerces d’un type dans un rayon donné
  * ------------------------------------------------------------------------- */
 /* ------------------------------------------------------------------
- *  GET /get_commerces_list  (version finale)
+ *  GET /get_commerces_list  (version robuste)
+ *  Params :
+ *     code_iris = 751176510
+ *     type      = magbio | boulang | …
+ *     rayon     = in_iris | 300 | 600 | 1000
  * ------------------------------------------------------------------ */
 app.get('/get_commerces_list', async (req, res) => {
   const { code_iris, type: prefix, rayon } = req.query;
 
+  /* 1) Validation -------------------------------------------------- */
   if (!code_iris || !prefix || !rayon)
-    return res.status(400).json({ error: 'Params requis : code_iris, type, rayon' });
+    return res.status(400).json({ error: 'Paramètres requis : code_iris, type, rayon' });
 
   if (!EQUIP_PREFIXES.includes(prefix))
-    return res.status(400).json({ error: 'Type non supporté' });
+    return res.status(400).json({ error: 'Type de commerce non supporté' });
 
   if (!['in_iris', '300', '600', '1000'].includes(rayon))
     return res.status(400).json({ error: 'Rayon invalide' });
 
+  const isBio = prefix === 'magbio';
+  const baseTable = isBio
+      ? 'equipements.magasins_bio_0725'
+      : 'equipements.base_2024';
+
   try {
-    let sql, params = [code_iris, prefix, rayon];
+    let sql, params;
 
-    /* === 1. MAGASINS BIO ========================================== */
-    if (prefix === 'magbio') {
-      sql = `
-        WITH iris AS (
-          SELECT geom_2154
-          FROM decoupages.iris_grandeetendue_2022
-          WHERE code_iris = $1
-        )
-        SELECT
-          TRIM(COALESCE(b.raison_sociale,'') ||
-               CASE WHEN COALESCE(b.denomination,'') <> ''
-                    THEN ' ('||b.denomination||')' ELSE '' END) AS nom,
-          TRIM(COALESCE(b.addr_lieu,'') || ', ' ||
-               COALESCE(b.addr_cp ,'') || ' '  ||
-               COALESCE(b.addr_ville,''))                     AS adresse
-        FROM equipements.magasins_bio_0725 b
-        JOIN iris i
-          ON (
-               $3 = 'in_iris' AND b.code_iris = $1
-            OR $3 = '300'     AND ST_DWithin(b.geom_2154, i.geom_2154,  300)
-            OR $3 = '600'     AND ST_DWithin(b.geom_2154, i.geom_2154,  600)
-            OR $3 = '1000'    AND ST_DWithin(b.geom_2154, i.geom_2154, 1000)
+    /* ----------------------------------------------------------------
+     * A.  RAYON = in_iris  → filtre simple code_iris
+     * ---------------------------------------------------------------- */
+    if (rayon === 'in_iris') {
+      if (isBio) {
+        sql = `
+          SELECT
+            TRIM(COALESCE(raison_sociale,'') ||
+                 CASE WHEN COALESCE(denomination,'') <> ''
+                      THEN ' ('||denomination||')' ELSE '' END) AS nom,
+            TRIM(COALESCE(addr_lieu,'') || ', ' ||
+                 COALESCE(addr_cp,'')  || ' '  ||
+                 COALESCE(addr_ville,''))                     AS adresse
+          FROM equipements.magasins_bio_0725
+          WHERE code_iris = $1 AND cert_etat = 'ENGAGEE'
+          ORDER BY nom;
+        `;
+        params = [code_iris];
+      } else {
+        sql = `
+          WITH codes AS (
+            SELECT typequ_codes FROM equipements.parametres
+            WHERE equip_prefix = $2
           )
-        WHERE b.cert_etat = 'ENGAGEE'
-        ORDER BY nom;
-      `;
+          SELECT
+            TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
+            TRIM(
+              COALESCE(numvoie,'') || ' ' ||
+              COALESCE(indrep,'')  || ' ' ||
+              COALESCE(typvoie,'') || ' ' ||
+              COALESCE(libvoie,'') || ' ' ||
+              COALESCE(cadr,'')    || ' ' ||
+              COALESCE(codpos,'')  || ' ' ||
+              COALESCE(libcom,'')
+            ) AS adresse
+          FROM equipements.base_2024 b, codes c
+          WHERE b.code_iris = $1
+            AND b.typequ    = ANY(c.typequ_codes)
+          ORDER BY nom;
+        `;
+        params = [code_iris, prefix];
+      }
 
-    /* === 2. AUTRES ÉQUIPEMENTS ==================================== */
+    /* ----------------------------------------------------------------
+     * B.  RAYON MÉTRIQUE  → jointure ST_DWithin
+     * ---------------------------------------------------------------- */
     } else {
-      sql = `
-        WITH iris AS (
-          SELECT geom_2154
-          FROM decoupages.iris_grandeetendue_2022
-          WHERE code_iris = $1
-        ),
-        codes AS (
-          SELECT typequ_codes
-          FROM equipements.parametres
-          WHERE equip_prefix = $2
-        )
-        SELECT
-          TRIM(COALESCE(b.nomrs,'') || ' ' || COALESCE(b.cnomrs,''))   AS nom,
-          TRIM(
-            COALESCE(b.numvoie,'') || ' ' ||
-            COALESCE(b.indrep,'')  || ' ' ||
-            COALESCE(b.typvoie,'') || ' ' ||
-            COALESCE(b.libvoie,'') || ' ' ||
-            COALESCE(b.cadr,'')    || ' ' ||
-            COALESCE(b.codpos,'')  || ' ' ||
-            COALESCE(b.libcom,'')
-          ) AS adresse
-        FROM equipements.base_2024 b, iris i, codes c
-        WHERE b.typequ = ANY(c.typequ_codes)
-          AND (
-                $3 = 'in_iris' AND b.code_iris = $1
-             OR $3 = '300'     AND ST_DWithin(b.geom_2154, i.geom_2154,  300)
-             OR $3 = '600'     AND ST_DWithin(b.geom_2154, i.geom_2154,  600)
-             OR $3 = '1000'    AND ST_DWithin(b.geom_2154, i.geom_2154, 1000)
+      const dist = Number(rayon);          // 300 | 600 | 1000
+      if (isBio) {
+        sql = `
+          WITH iris AS (
+            SELECT geom_2154 FROM decoupages.iris_grandeetendue_2022
+            WHERE code_iris = $1
           )
-        ORDER BY nom;
-      `;
+          SELECT
+            TRIM(COALESCE(raison_sociale,'') ||
+                 CASE WHEN COALESCE(denomination,'') <> ''
+                      THEN ' ('||denomination||')' ELSE '' END) AS nom,
+            TRIM(COALESCE(addr_lieu,'') || ', ' ||
+                 COALESCE(addr_cp,'')  || ' '  ||
+                 COALESCE(addr_ville,''))                     AS adresse
+          FROM equipements.magasins_bio_0725 b, iris i
+          WHERE cert_etat = 'ENGAGEE'
+            AND ST_DWithin(b.geom_2154, i.geom_2154, $3)
+          ORDER BY nom;
+        `;
+        params = [code_iris, prefix, dist];
+      } else {
+        sql = `
+          WITH iris AS (
+            SELECT geom_2154 FROM decoupages.iris_grandeetendue_2022
+            WHERE code_iris = $1
+          ),
+          codes AS (
+            SELECT typequ_codes FROM equipements.parametres
+            WHERE equip_prefix = $2
+          )
+          SELECT
+            TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
+            TRIM(
+              COALESCE(numvoie,'') || ' ' ||
+              COALESCE(indrep,'')  || ' ' ||
+              COALESCE(typvoie,'') || ' ' ||
+              COALESCE(libvoie,'') || ' ' ||
+              COALESCE(cadr,'')    || ' ' ||
+              COALESCE(codpos,'')  || ' ' ||
+              COALESCE(libcom,'')
+            ) AS adresse
+          FROM equipements.base_2024 b, iris i, codes c
+          WHERE b.typequ = ANY(c.typequ_codes)
+            AND ST_DWithin(b.geom_2154, i.geom_2154, $3)
+          ORDER BY nom;
+        `;
+        params = [code_iris, prefix, dist];
+      }
     }
 
+    /* 3) Exécution -------------------------------------------------- */
     const { rows } = await pool.query(sql, params);
     res.json(rows);
 
@@ -1531,6 +1576,7 @@ app.get('/get_commerces_list', async (req, res) => {
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
+
 
 
 // ------------------------------------------------------------------
