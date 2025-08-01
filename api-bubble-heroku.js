@@ -1473,7 +1473,10 @@ app.get('/get_commerces_list', async (req, res) => {
                  COALESCE(addr_cp,'')  || ' '  ||
                  COALESCE(addr_ville,'')) AS adresse
           FROM equipements.magasins_bio_0725
-          WHERE code_iris = $1 AND cert_etat = 'ENGAGEE'
+          WHERE code_iris::text = $1::text 
+            AND code_iris IS NOT NULL 
+            AND code_iris <> ''
+            AND cert_etat = 'ENGAGEE'
           ORDER BY nom;
         `;
         params = [code_iris];
@@ -1496,6 +1499,8 @@ app.get('/get_commerces_list', async (req, res) => {
                  COALESCE(addr_ville,'')) AS adresse
           FROM equipements.magasins_bio_0725 b, iris i
           WHERE cert_etat = 'ENGAGEE'
+            AND b.code_iris IS NOT NULL
+            AND b.code_iris <> ''
             AND ST_DWithin(b.geom_2154, i.geom_2154, $2)
           ORDER BY nom;
         `;
