@@ -1463,7 +1463,7 @@ app.get('/get_commerces_list', async (req, res) => {
      * ---------------------------------------------------------------- */
     if (prefix === 'magbio') {
       if (rayon === 'in_iris') {
-        /* --- bio + in_iris avec formatage complet --- */
+        /* --- bio + in_iris avec formatage sécurisé --- */
         sql = `
           SELECT
             TRIM(
@@ -1477,8 +1477,8 @@ app.get('/get_commerces_list', async (req, res) => {
             TRIM(
               COALESCE(addr_lieu, '') || 
               CASE WHEN addr_lieu IS NOT NULL AND addr_lieu <> '' THEN ', ' ELSE '' END ||
-              COALESCE(addr_cp, '') || 
-              CASE WHEN addr_cp IS NOT NULL AND addr_cp <> '' THEN ' ' ELSE '' END ||
+              COALESCE(CAST(addr_cp AS TEXT), '') || 
+              CASE WHEN addr_cp IS NOT NULL THEN ' ' ELSE '' END ||
               COALESCE(addr_ville, '')
             ) AS adresse
           FROM equipements.magasins_bio_0725
@@ -1489,7 +1489,7 @@ app.get('/get_commerces_list', async (req, res) => {
         params = [code_iris];
 
       } else {
-        /* --- bio + rayon métrique avec formatage complet --- */
+        /* --- bio + rayon métrique avec formatage sécurisé --- */
         const dist = parseInt(rayon, 10);
         sql = `
           WITH iris_check AS (
@@ -1510,8 +1510,8 @@ app.get('/get_commerces_list', async (req, res) => {
             TRIM(
               COALESCE(m.addr_lieu, '') || 
               CASE WHEN m.addr_lieu IS NOT NULL AND m.addr_lieu <> '' THEN ', ' ELSE '' END ||
-              COALESCE(m.addr_cp, '') || 
-              CASE WHEN m.addr_cp IS NOT NULL AND m.addr_cp <> '' THEN ' ' ELSE '' END ||
+              COALESCE(CAST(m.addr_cp AS TEXT), '') || 
+              CASE WHEN m.addr_cp IS NOT NULL THEN ' ' ELSE '' END ||
               COALESCE(m.addr_ville, '')
             ) AS adresse
           FROM equipements.magasins_bio_0725 m
@@ -1519,6 +1519,10 @@ app.get('/get_commerces_list', async (req, res) => {
           WHERE m.cert_etat = 'ENGAGEE'
             AND m.geom_2154 IS NOT NULL
             AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
+          ORDER BY nom;
+        `;
+        params = [code_iris, dist];
+      }(m.geom_2154, i.geom_2154, $2)
           ORDER BY nom;
         `;
         params = [code_iris, dist];
