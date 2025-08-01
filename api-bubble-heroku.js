@@ -1499,7 +1499,7 @@ app.get('/get_commerces_list', async (req, res) => {
             LIMIT 1
           )
           SELECT
-            TRIM(COALESCE(m.raison_sociale, '') || ' (' || COALESCE(m.denomination, '') || ')') AS nom
+            TRIM(COALESCE(m.raison_sociale, '') || ' (' || COALESCE(m.denomination, '') || ')') AS nom,
             TRIM(
               COALESCE(m.addr_lieu::text, '') || ' ' ||
               COALESCE(m.addr_cp::text, '') || ' ' ||
