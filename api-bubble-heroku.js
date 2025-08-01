@@ -1463,7 +1463,7 @@ app.get('/get_commerces_list', async (req, res) => {
      * ---------------------------------------------------------------- */
     if (prefix === 'magbio') {
       if (rayon === 'in_iris') {
-        /* --- bio + in_iris - version qui fonctionne --- */
+        /* --- Version simplifiée pour debug --- */
         sql = `
           SELECT
             COALESCE(raison_sociale, 'Sans nom') AS nom,
@@ -1471,14 +1471,17 @@ app.get('/get_commerces_list', async (req, res) => {
           FROM equipements.magasins_bio_0725
           WHERE code_iris = $1
             AND cert_etat = 'ENGAGEE'
-          ORDER BY nom;
+          ORDER BY nom
+          LIMIT 50;
         `;
         params = [code_iris];
 
       } else {
-        /* --- bio + rayon métrique - version qui fonctionne --- */
+        /* --- bio + rayon métrique --- */
         const dist = parseInt(rayon, 10);
+        // D'abord, vérifions que l'IRIS existe
         sql = `
+          -- Vérification de l'IRIS
           WITH iris_check AS (
             SELECT code_iris, geom_2154
             FROM decoupages.iris_grandeetendue_2022
@@ -1493,11 +1496,8 @@ app.get('/get_commerces_list', async (req, res) => {
           WHERE m.cert_etat = 'ENGAGEE'
             AND m.geom_2154 IS NOT NULL
             AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
-          ORDER BY nom;
-        `;
-        params = [code_iris, dist];
-      }(m.geom_2154, i.geom_2154, $2)
-          ORDER BY nom;
+          ORDER BY nom
+          LIMIT 50;
         `;
         params = [code_iris, dist];
       }
@@ -1570,6 +1570,16 @@ app.get('/get_commerces_list', async (req, res) => {
     console.log('With params:', params);
     
     const { rows } = await pool.query(sql, params);
+    
+    // Pour les magasins bio, reformater si nécessaire
+    if (prefix === 'magbio') {
+      const formattedRows = rows.map(row => ({
+        nom: row.nom,
+        adresse: row.adresse
+      }));
+      return res.json(formattedRows);
+    }
+    
     res.json(rows);
 
   } catch (err) {
