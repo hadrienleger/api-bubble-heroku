@@ -1463,24 +1463,11 @@ app.get('/get_commerces_list', async (req, res) => {
      * ---------------------------------------------------------------- */
     if (prefix === 'magbio') {
       if (rayon === 'in_iris') {
-        /* --- bio + in_iris avec formatage complet --- */
+        /* --- bio + in_iris - version qui fonctionne --- */
         sql = `
           SELECT
-            TRIM(
-              COALESCE(raison_sociale, '') ||
-              CASE 
-                WHEN denomination IS NOT NULL AND denomination <> '' 
-                THEN ' (' || denomination || ')' 
-                ELSE '' 
-              END
-            ) AS nom,
-            TRIM(
-              COALESCE(addr_lieu, '') || 
-              CASE WHEN addr_lieu IS NOT NULL AND addr_lieu <> '' THEN ', ' ELSE '' END ||
-              COALESCE(addr_cp, '') || 
-              CASE WHEN addr_cp IS NOT NULL AND addr_cp <> '' THEN ' ' ELSE '' END ||
-              COALESCE(addr_ville, '')
-            ) AS adresse
+            COALESCE(raison_sociale, 'Sans nom') AS nom,
+            COALESCE(addr_ville, 'Sans ville') AS adresse
           FROM equipements.magasins_bio_0725
           WHERE code_iris = $1
             AND cert_etat = 'ENGAGEE'
@@ -1489,7 +1476,7 @@ app.get('/get_commerces_list', async (req, res) => {
         params = [code_iris];
 
       } else {
-        /* --- bio + rayon métrique avec formatage complet --- */
+        /* --- bio + rayon métrique - version qui fonctionne --- */
         const dist = parseInt(rayon, 10);
         sql = `
           WITH iris_check AS (
@@ -1499,21 +1486,8 @@ app.get('/get_commerces_list', async (req, res) => {
             LIMIT 1
           )
           SELECT
-            TRIM(
-              COALESCE(m.raison_sociale, '') ||
-              CASE 
-                WHEN m.denomination IS NOT NULL AND m.denomination <> '' 
-                THEN ' (' || m.denomination || ')' 
-                ELSE '' 
-              END
-            ) AS nom,
-            TRIM(
-              COALESCE(m.addr_lieu, '') || 
-              CASE WHEN m.addr_lieu IS NOT NULL AND m.addr_lieu <> '' THEN ', ' ELSE '' END ||
-              COALESCE(m.addr_cp, '') || 
-              CASE WHEN m.addr_cp IS NOT NULL AND m.addr_cp <> '' THEN ' ' ELSE '' END ||
-              COALESCE(m.addr_ville, '')
-            ) AS adresse
+            COALESCE(m.raison_sociale, 'Sans nom') AS nom,
+            COALESCE(m.addr_ville, 'Sans ville') AS adresse
           FROM equipements.magasins_bio_0725 m
           CROSS JOIN iris_check i
           WHERE m.cert_etat = 'ENGAGEE'
