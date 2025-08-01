@@ -1514,7 +1514,6 @@ if (prefix === 'magbio') {
     `;
     params = [cleanedCodeIris, dist];
   }
-}
 
     /* ----------------------------------------------------------------
      * B. AUTRES ÉQUIPEMENTS (base_2024)
