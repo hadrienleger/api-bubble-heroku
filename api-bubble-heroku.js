@@ -1459,14 +1459,23 @@ app.get('/get_commerces_list', async (req, res) => {
 
   try {
     /* ----------------------------------------------------------------
-     * A. MAGASINS BIO - Debug simplifié
+     * A. MAGASINS BIO - Version progressive
      * ---------------------------------------------------------------- */
     if (prefix === 'magbio') {
       if (rayon === 'in_iris') {
-        /* --- Version simplifiée pour debug --- */
+        /* --- bio + in_iris : ajout progressif --- */
         sql = `
           SELECT
-            COALESCE(raison_sociale, 'Sans nom') AS nom,
+            COALESCE(raison_sociale, 'Sans nom') || 
+            CASE 
+              WHEN denomination IS NOT NULL AND denomination <> '' 
+              THEN ' (' || denomination || ')' 
+              ELSE '' 
+            END AS nom,
+            COALESCE(addr_lieu, '') || 
+            CASE WHEN addr_lieu <> '' THEN ', ' ELSE '' END ||
+            COALESCE(addr_cp, '') || 
+            CASE WHEN addr_cp <> '' THEN ' ' ELSE '' END ||
             COALESCE(addr_ville, 'Sans ville') AS adresse
           FROM equipements.magasins_bio_0725
           WHERE code_iris = $1
@@ -1479,9 +1488,7 @@ app.get('/get_commerces_list', async (req, res) => {
       } else {
         /* --- bio + rayon métrique --- */
         const dist = parseInt(rayon, 10);
-        // D'abord, vérifions que l'IRIS existe
         sql = `
-          -- Vérification de l'IRIS
           WITH iris_check AS (
             SELECT code_iris, geom_2154
             FROM decoupages.iris_grandeetendue_2022
@@ -1489,7 +1496,16 @@ app.get('/get_commerces_list', async (req, res) => {
             LIMIT 1
           )
           SELECT
-            COALESCE(m.raison_sociale, 'Sans nom') AS nom,
+            COALESCE(m.raison_sociale, 'Sans nom') || 
+            CASE 
+              WHEN m.denomination IS NOT NULL AND m.denomination <> '' 
+              THEN ' (' || m.denomination || ')' 
+              ELSE '' 
+            END AS nom,
+            COALESCE(m.addr_lieu, '') || 
+            CASE WHEN m.addr_lieu <> '' THEN ', ' ELSE '' END ||
+            COALESCE(m.addr_cp, '') || 
+            CASE WHEN m.addr_cp <> '' THEN ' ' ELSE '' END ||
             COALESCE(m.addr_ville, 'Sans ville') AS adresse
           FROM equipements.magasins_bio_0725 m
           CROSS JOIN iris_check i
@@ -1570,16 +1586,6 @@ app.get('/get_commerces_list', async (req, res) => {
     console.log('With params:', params);
     
     const { rows } = await pool.query(sql, params);
-    
-    // Pour les magasins bio, reformater si nécessaire
-    if (prefix === 'magbio') {
-      const formattedRows = rows.map(row => ({
-        nom: row.nom,
-        adresse: row.adresse
-      }));
-      return res.json(formattedRows);
-    }
-    
     res.json(rows);
 
   } catch (err) {
