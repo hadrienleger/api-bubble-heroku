@@ -1609,7 +1609,8 @@ app.get('/get_commerces_list', async (req, res) => {
 
 /* -------------------------------------------------------------------------
  * ENDPOINT COMMERCES ALL : Récupère tous les commerces pour un code IRIS
- *                          pour les rayons in_iris, 300 et 600, organisé par type
+ *                          pour les rayons in_iris, 300, 600 et 1000, organisé par type
+ *                          avec le nombre total de commerces par type et rayon
  * ------------------------------------------------------------------------- */
 app.get('/get_all_commerces', async (req, res) => {
   const { code_iris } = req.query;
@@ -1642,23 +1643,25 @@ app.get('/get_all_commerces', async (req, res) => {
     /* 3) Initialiser la structure pour chaque type de commerce */
     for (const { prefix } of equipPrefixes) {
       result.commerces[prefix] = {
-        in_iris: [],
-        300: [],
-        600: []
+        in_iris: { count: 0, items: [] },
+        300: { count: 0, items: [] },
+        600: { count: 0, items: [] },
+        1000: { count: 0, items: [] }
       };
     }
     result.commerces.magbio = {
-      in_iris: [],
-      300: [],
-      600: []
+      in_iris: { count: 0, items: [] },
+      300: { count: 0, items: [] },
+      600: { count: 0, items: [] },
+      1000: { count: 0, items: [] }
     };
 
     /* 4) Traiter chaque type de commerce */
-    const rayons = ['in_iris', '300', '600'];
+    const rayons = ['in_iris', '300', '600', '1000'];
 
     // Magasins bio
     for (const rayon of rayons) {
-      let sql, params;
+      let sql, params, countSql;
       if (rayon === 'in_iris') {
         sql = `
           SELECT
@@ -1674,6 +1677,13 @@ app.get('/get_all_commerces', async (req, res) => {
             AND code_iris IS NOT NULL
           ORDER BY nom
           LIMIT 50;
+        `;
+        countSql = `
+          SELECT COUNT(*) AS total
+          FROM equipements.magasins_bio_0725
+          WHERE code_iris = $1
+            AND cert_etat = 'ENGAGEE'
+            AND code_iris IS NOT NULL;
         `;
         params = [cleanedCodeIris];
       } else {
@@ -1701,6 +1711,21 @@ app.get('/get_all_commerces', async (req, res) => {
           ORDER BY nom
           LIMIT 50;
         `;
+        countSql = `
+          WITH iris_check AS (
+            SELECT code_iris, geom_2154
+            FROM decoupages.iris_grandeetendue_2022
+            WHERE code_iris = $1::text
+            LIMIT 1
+          )
+          SELECT COUNT(*) AS total
+          FROM equipements.magasins_bio_0725 m
+          CROSS JOIN iris_check i
+          WHERE m.cert_etat = 'ENGAGEE'
+            AND m.geom_2154 IS NOT NULL
+            AND m.code_iris IS NOT NULL
+            AND ST_DWithin(m.geom_2154, i.geom_2154, $2);
+        `;
         params = [cleanedCodeIris, dist];
       }
 
@@ -1708,13 +1733,17 @@ app.get('/get_all_commerces', async (req, res) => {
       console.log('With params:', params);
 
       const { rows: magbioRows } = await pool.query(sql, params);
-      result.commerces.magbio[rayon] = magbioRows.map(row => ({ nom: row.nom, adresse: row.adresse }));
+      const { rows: countRows } = await pool.query(countSql, params);
+      result.commerces.magbio[rayon] = {
+        count: parseInt(countRows[0]?.total || 0, 10),
+        items: magbioRows.map(row => ({ nom: row.nom, adresse: row.adresse }))
+      };
     }
 
     // Autres équipements
     for (const { prefix, codes } of equipPrefixes.filter(p => p.prefix !== 'magbio')) {
       for (const rayon of rayons) {
-        let sql, params;
+        let sql, params, countSql;
         if (rayon === 'in_iris') {
           sql = `
             SELECT
@@ -1732,6 +1761,12 @@ app.get('/get_all_commerces', async (req, res) => {
             WHERE code_iris = $1
               AND typequ = ANY($2)
             ORDER BY nom;
+          `;
+          countSql = `
+            SELECT COUNT(*) AS total
+            FROM equipements.base_2024
+            WHERE code_iris = $1
+              AND typequ = ANY($2);
           `;
           params = [cleanedCodeIris, codes];
         } else {
@@ -1758,6 +1793,17 @@ app.get('/get_all_commerces', async (req, res) => {
               AND ST_DWithin(b.geom_2154, i.geom_2154, $3)
             ORDER BY nom;
           `;
+          countSql = `
+            WITH iris AS (
+              SELECT geom_2154
+              FROM decoupages.iris_grandeetendue_2022
+              WHERE code_iris = $1::text
+            )
+            SELECT COUNT(*) AS total
+            FROM equipements.base_2024 b, iris i
+            WHERE b.typequ = ANY($2)
+              AND ST_DWithin(b.geom_2154, i.geom_2154, $3);
+          `;
           params = [cleanedCodeIris, codes, dist];
         }
 
@@ -1765,7 +1811,11 @@ app.get('/get_all_commerces', async (req, res) => {
         console.log('With params:', params);
 
         const { rows } = await pool.query(sql, params);
-        result.commerces[prefix][rayon] = rows.map(row => ({ nom: row.nom, adresse: row.adresse }));
+        const { rows: countRows } = await pool.query(countSql, params);
+        result.commerces[prefix][rayon] = {
+          count: parseInt(countRows[0]?.total || 0, 10),
+          items: rows.map(row => ({ nom: row.nom, adresse: row.adresse }))
+        };
       }
     }
 
