@@ -1463,6 +1463,12 @@ app.get('/get_commerces_list', async (req, res) => {
  * A. MAGASINS BIO
  * ---------------------------------------------------------------- */
 if (prefix === 'magbio') {
+  // Validation de code_iris
+  const cleanedCodeIris = String(code_iris).trim();
+  if (!cleanedCodeIris) {
+    return res.status(400).json({ error: 'code_iris doit être une chaîne non vide' });
+  }
+
   if (rayon === 'in_iris') {
     sql = `
       SELECT
@@ -1475,10 +1481,11 @@ if (prefix === 'magbio') {
       FROM equipements.magasins_bio_0725
       WHERE code_iris = $1
         AND cert_etat = 'ENGAGEE'
+        AND code_iris IS NOT NULL
       ORDER BY nom
       LIMIT 50;
     `;
-    params = [code_iris];
+    params = [cleanedCodeIris];
   } else {
     const dist = parseInt(rayon, 10);
     sql = `
@@ -1500,12 +1507,14 @@ if (prefix === 'magbio') {
       CROSS JOIN iris_check i
       WHERE m.cert_etat = 'ENGAGEE'
         AND m.geom_2154 IS NOT NULL
+        AND m.code_iris IS NOT NULL
         AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
       ORDER BY nom
       LIMIT 50;
     `;
-    params = [code_iris, dist];
+    params = [cleanedCodeIris, dist];
   }
+}
 
     /* ----------------------------------------------------------------
      * B. AUTRES ÉQUIPEMENTS (base_2024)
