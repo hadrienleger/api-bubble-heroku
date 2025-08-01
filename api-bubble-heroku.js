@@ -1469,7 +1469,7 @@ app.get('/get_commerces_list', async (req, res) => {
         /* --- Version simplifiée pour debug --- */
         sql = `
           SELECT
-            COALESCE(raison_sociale, denomination) AS nom,
+            TRIM(raison_sociale, denomination) AS nom,
             COALESCE(addr_ville, 'Sans ville') AS adresse
           FROM equipements.magasins_bio_0725
           WHERE code_iris = $1
