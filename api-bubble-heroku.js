@@ -1463,7 +1463,7 @@ app.get('/get_commerces_list', async (req, res) => {
      * ---------------------------------------------------------------- */
     if (prefix === 'magbio') {
       if (rayon === 'in_iris') {
-        /* --- bio + in_iris : simple égalité ------------------------ */
+        /* --- bio + in_iris : utilise COALESCE pour gérer les valeurs vides --- */
         sql = `
           SELECT
             TRIM(COALESCE(raison_sociale,'') ||
@@ -1473,22 +1473,21 @@ app.get('/get_commerces_list', async (req, res) => {
                  COALESCE(addr_cp,'')  || ' '  ||
                  COALESCE(addr_ville,'')) AS adresse
           FROM equipements.magasins_bio_0725
-          WHERE code_iris::text = $1::text 
-            AND code_iris IS NOT NULL 
-            AND code_iris <> ''
+          WHERE COALESCE(code_iris::text, '') = $1::text
             AND cert_etat = 'ENGAGEE'
           ORDER BY nom;
         `;
         params = [code_iris];
 
       } else {
-        /* --- bio + rayon métrique ---------------------------------- */
-        const dist = parseInt(rayon, 10); // Conversion explicite en entier
+        /* --- bio + rayon métrique : utilise uniquement la géométrie --- */
+        const dist = parseInt(rayon, 10);
         sql = `
           WITH iris AS (
             SELECT geom_2154
             FROM decoupages.iris_grandeetendue_2022
             WHERE code_iris = $1
+            LIMIT 1
           )
           SELECT
             TRIM(COALESCE(raison_sociale,'') ||
@@ -1497,11 +1496,12 @@ app.get('/get_commerces_list', async (req, res) => {
             TRIM(COALESCE(addr_lieu,'') || ', ' ||
                  COALESCE(addr_cp,'')  || ' '  ||
                  COALESCE(addr_ville,'')) AS adresse
-          FROM equipements.magasins_bio_0725 b, iris i
+          FROM equipements.magasins_bio_0725 b
           WHERE cert_etat = 'ENGAGEE'
-            AND b.code_iris IS NOT NULL
-            AND b.code_iris <> ''
-            AND ST_DWithin(b.geom_2154, i.geom_2154, $2)
+            AND EXISTS (
+              SELECT 1 FROM iris i 
+              WHERE ST_DWithin(b.geom_2154, i.geom_2154, $2)
+            )
           ORDER BY nom;
         `;
         params = [code_iris, dist];
@@ -1539,7 +1539,7 @@ app.get('/get_commerces_list', async (req, res) => {
 
       } else {
         /* --- autre + rayon métrique -------------------------------- */
-        const dist = parseInt(rayon, 10); // Conversion explicite en entier
+        const dist = parseInt(rayon, 10);
         sql = `
           WITH iris AS (
             SELECT geom_2154
@@ -1576,6 +1576,8 @@ app.get('/get_commerces_list', async (req, res) => {
 
   } catch (err) {
     console.error('Erreur dans /get_commerces_list:', err);
+    console.error('SQL:', sql);
+    console.error('Params:', params);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
