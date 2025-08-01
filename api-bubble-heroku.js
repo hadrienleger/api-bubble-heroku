@@ -1607,6 +1607,178 @@ app.get('/get_commerces_list', async (req, res) => {
   }
 });
 
+/* -------------------------------------------------------------------------
+ * ENDPOINT COMMERCES ALL : Récupère tous les commerces pour un code IRIS
+ *                          pour les rayons in_iris, 300 et 600, organisé par type
+ * ------------------------------------------------------------------------- */
+app.get('/get_all_commerces', async (req, res) => {
+  const { code_iris } = req.query;
+
+  /* 1) Validation */
+  if (!code_iris) {
+    return res.status(400).json({ error: 'Paramètre requis : code_iris' });
+  }
+
+  const cleanedCodeIris = String(code_iris).trim();
+  if (!cleanedCodeIris || !/^[0-9]+$/.test(cleanedCodeIris)) {
+    console.log('Validation échouée pour code_iris:', code_iris);
+    return res.status(400).json({ error: 'code_iris doit être une chaîne de chiffres non vide' });
+  }
+
+  try {
+    const result = {
+      code_iris: cleanedCodeIris,
+      commerces: {}
+    };
+
+    /* 2) Récupérer la liste des préfixes d'équipements */
+    const prefixQuery = `
+      SELECT equip_prefix, typequ_codes
+      FROM equipements.parametres;
+    `;
+    const { rows: prefixes } = await pool.query(prefixQuery);
+    const equipPrefixes = prefixes.map(p => ({ prefix: p.equip_prefix, codes: p.typequ_codes }));
+
+    /* 3) Initialiser la structure pour chaque type de commerce */
+    for (const { prefix } of equipPrefixes) {
+      result.commerces[prefix] = {
+        in_iris: [],
+        300: [],
+        600: []
+      };
+    }
+    result.commerces.magbio = {
+      in_iris: [],
+      300: [],
+      600: []
+    };
+
+    /* 4) Traiter chaque type de commerce */
+    const rayons = ['in_iris', '300', '600'];
+
+    // Magasins bio
+    for (const rayon of rayons) {
+      let sql, params;
+      if (rayon === 'in_iris') {
+        sql = `
+          SELECT
+            TRIM(COALESCE(raison_sociale, '') || ' (' || COALESCE(denomination, '') || ')') AS nom,
+            TRIM(
+              COALESCE(addr_lieu::text, '') || ' ' ||
+              COALESCE(addr_cp::text, '') || ' ' ||
+              COALESCE(addr_ville::text, '')
+            ) AS adresse
+          FROM equipements.magasins_bio_0725
+          WHERE code_iris = $1
+            AND cert_etat = 'ENGAGEE'
+            AND code_iris IS NOT NULL
+          ORDER BY nom
+          LIMIT 50;
+        `;
+        params = [cleanedCodeIris];
+      } else {
+        const dist = parseInt(rayon, 10);
+        sql = `
+          WITH iris_check AS (
+            SELECT code_iris, geom_2154
+            FROM decoupages.iris_grandeetendue_2022
+            WHERE code_iris = $1::text
+            LIMIT 1
+          )
+          SELECT
+            TRIM(COALESCE(m.raison_sociale, '') || ' (' || COALESCE(m.denomination, '') || ')') AS nom,
+            TRIM(
+              COALESCE(m.addr_lieu::text, '') || ' ' ||
+              COALESCE(m.addr_cp::text, '') || ' ' ||
+              COALESCE(m.addr_ville::text, '')
+            ) AS adresse
+          FROM equipements.magasins_bio_0725 m
+          CROSS JOIN iris_check i
+          WHERE m.cert_etat = 'ENGAGEE'
+            AND m.geom_2154 IS NOT NULL
+            AND m.code_iris IS NOT NULL
+            AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
+          ORDER BY nom
+          LIMIT 50;
+        `;
+        params = [cleanedCodeIris, dist];
+      }
+
+      console.log(`Executing SQL for magbio, rayon ${rayon}:`, sql.substring(0, 200) + '...');
+      console.log('With params:', params);
+
+      const { rows: magbioRows } = await pool.query(sql, params);
+      result.commerces.magbio[rayon] = magbioRows.map(row => ({ nom: row.nom, adresse: row.adresse }));
+    }
+
+    // Autres équipements
+    for (const { prefix, codes } of equipPrefixes.filter(p => p.prefix !== 'magbio')) {
+      for (const rayon of rayons) {
+        let sql, params;
+        if (rayon === 'in_iris') {
+          sql = `
+            SELECT
+              TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
+              TRIM(
+                COALESCE(numvoie,'') || ' ' ||
+                COALESCE(indrep,'') || ' ' ||
+                COALESCE(typvoie,'') || ' ' ||
+                COALESCE(libvoie,'') || ' ' ||
+                COALESCE(cadr,'') || ' ' ||
+                COALESCE(codpos,'') || ' ' ||
+                COALESCE(libcom,'')
+              ) AS adresse
+            FROM equipements.base_2024
+            WHERE code_iris = $1
+              AND typequ = ANY($2)
+            ORDER BY nom;
+          `;
+          params = [cleanedCodeIris, codes];
+        } else {
+          const dist = parseInt(rayon, 10);
+          sql = `
+            WITH iris AS (
+              SELECT geom_2154
+              FROM decoupages.iris_grandeetendue_2022
+              WHERE code_iris = $1::text
+            )
+            SELECT
+              TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
+              TRIM(
+                COALESCE(numvoie,'') || ' ' ||
+                COALESCE(indrep,'') || ' ' ||
+                COALESCE(typvoie,'') || ' ' ||
+                COALESCE(libvoie,'') || ' ' ||
+                COALESCE(cadr,'') || ' ' ||
+                COALESCE(codpos,'') || ' ' ||
+                COALESCE(libcom,'')
+              ) AS adresse
+            FROM equipements.base_2024 b, iris i
+            WHERE b.typequ = ANY($2)
+              AND ST_DWithin(b.geom_2154, i.geom_2154, $3)
+            ORDER BY nom;
+          `;
+          params = [cleanedCodeIris, codes, dist];
+        }
+
+        console.log(`Executing SQL for ${prefix}, rayon ${rayon}:`, sql.substring(0, 200) + '...');
+        console.log('With params:', params);
+
+        const { rows } = await pool.query(sql, params);
+        result.commerces[prefix][rayon] = rows.map(row => ({ nom: row.nom, adresse: row.adresse }));
+      }
+    }
+
+    return res.json(result);
+
+  } catch (err) {
+    console.error('Erreur dans /get_all_commerces:', err);
+    console.error('SQL était:', sql);
+    console.error('Params étaient:', params);
+    res.status(500).json({ error: 'Erreur serveur', details: err.message });
+  }
+});
+
 
 // ------------------------------------------------------------------
 // CENTROID (NOUVEAU ENDPOINT) - ABANDONNE MAIS JE LE GARDE AU CAS OÙ
