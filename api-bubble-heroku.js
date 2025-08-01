@@ -1440,11 +1440,8 @@ app.get('/get_commerces_number/:code_iris', async (req, res) => {
 });
 
 /* -------------------------------------------------------------------------
- * ENDPOINT COMMERCES 2 : liste des commerces d’un type dans un rayon donné
+ * ENDPOINT COMMERCES 2 : liste des commerces d'un type dans un rayon donné
  * ------------------------------------------------------------------------- */
-/* ------------------------------------------------------------------
- *  GET /get_commerces_list   (patch définitif)
- * ------------------------------------------------------------------ */
 app.get('/get_commerces_list', async (req, res) => {
   const { code_iris, type: prefix, rayon } = req.query;
 
@@ -1483,7 +1480,7 @@ app.get('/get_commerces_list', async (req, res) => {
 
       } else {
         /* --- bio + rayon métrique ---------------------------------- */
-        const dist = Number(rayon);
+        const dist = parseInt(rayon, 10); // Conversion explicite en entier
         sql = `
           WITH iris AS (
             SELECT geom_2154
@@ -1537,7 +1534,7 @@ app.get('/get_commerces_list', async (req, res) => {
 
       } else {
         /* --- autre + rayon métrique -------------------------------- */
-        const dist = Number(rayon);
+        const dist = parseInt(rayon, 10); // Conversion explicite en entier
         sql = `
           WITH iris AS (
             SELECT geom_2154
@@ -1573,7 +1570,7 @@ app.get('/get_commerces_list', async (req, res) => {
     res.json(rows);
 
   } catch (err) {
-    console.error(err);
+    console.error('Erreur dans /get_commerces_list:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
