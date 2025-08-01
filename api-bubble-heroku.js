@@ -1442,15 +1442,12 @@ app.get('/get_commerces_number/:code_iris', async (req, res) => {
 /* -------------------------------------------------------------------------
  * ENDPOINT COMMERCES 2 : liste des commerces d’un type dans un rayon donné
  * ------------------------------------------------------------------------- */
-/* -------------------------------------------------------------------------
- * ENDPOINT COMMERCES 2 : liste des commerces d'un type dans un rayon donné
- * ------------------------------------------------------------------------- */
 app.get('/get_commerces_list', async (req, res) => {
   const { code_iris, type: prefix, rayon } = req.query;
 
-  /* 1) Validation */
+  /* Validation */
   if (!code_iris || !prefix || !rayon)
-    return res.status(400).json({ error: 'Paramètres requis : code_iris, type, rayon' });
+    return res.status(400).json({ error: 'Params requis : code_iris, type, rayon' });
 
   if (!EQUIP_PREFIXES.includes(prefix))
     return res.status(400).json({ error: 'Type non supporté' });
@@ -1458,72 +1455,70 @@ app.get('/get_commerces_list', async (req, res) => {
   if (!['in_iris', '300', '600', '1000'].includes(rayon))
     return res.status(400).json({ error: 'Rayon invalide' });
 
-  let sql, params;
+  let sql, params = [];
 
   try {
-    /* ----------------------------------------------------------------
-     * A. MAGASINS BIO - Debug simplifié
-     * ---------------------------------------------------------------- */
+    /* -------------------------------------------------------------- *
+     *  A.  MAGASINS BIO                                              *
+     * -------------------------------------------------------------- */
     if (prefix === 'magbio') {
       if (rayon === 'in_iris') {
-        /* --- Version simplifiée pour debug --- */
-/* --- BIO + in_iris ---------------------------------------------- */
-sql = `
-  SELECT
-    TRIM(
-      COALESCE(raison_sociale,'') ||
-      CASE WHEN COALESCE(denomination,'') <> ''
-           THEN ' ('||denomination||')' ELSE '' END
-    ) AS nom,
-    TRIM(
-      COALESCE(addr_lieu,'') || ', ' ||
-      COALESCE(addr_cp  ,'') || ' '  ||
-      COALESCE(addr_ville,'')
-    ) AS adresse
-  FROM equipements.magasins_bio_0725
-  WHERE code_iris = $1
-    AND cert_etat = 'ENGAGEE'
-  ORDER BY nom
-  LIMIT 50;
-`;
-params = [code_iris];
+        /* --- bio + in_iris --------------------------------------- */
+        sql = `
+          SELECT
+            TRIM(
+              COALESCE(raison_sociale,'') ||
+              CASE WHEN COALESCE(denomination,'') <> ''
+                   THEN ' ('||denomination||')' ELSE '' END
+            ) AS nom,
+            TRIM(
+              COALESCE(addr_lieu,'') || ', ' ||
+              COALESCE(addr_cp  ,'') || ' '  ||
+              COALESCE(addr_ville,'')
+            ) AS adresse
+          FROM equipements.magasins_bio_0725
+          WHERE code_iris = $1
+            AND cert_etat = 'ENGAGEE'
+          ORDER BY nom
+          LIMIT 50;
+        `;
+        params = [code_iris];
 
-/* --- BIO + rayon métrique --------------------------------------- */
-const dist = parseInt(rayon, 10);
-sql = `
-  WITH iris AS (
-    SELECT geom_2154
-    FROM decoupages.iris_grandeetendue_2022
-    WHERE code_iris = $1
-  )
-  SELECT
-    TRIM(
-      COALESCE(raison_sociale,'') ||
-      CASE WHEN COALESCE(denomination,'') <> ''
-           THEN ' ('||denomination||')' ELSE '' END
-    ) AS nom,
-    TRIM(
-      COALESCE(addr_lieu,'') || ', ' ||
-      COALESCE(addr_cp  ,'') || ' '  ||
-      COALESCE(addr_ville,'')
-    ) AS adresse
-  FROM equipements.magasins_bio_0725 m, iris i
-  WHERE cert_etat = 'ENGAGEE'
-    AND m.geom_2154 IS NOT NULL
-    AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
-  ORDER BY nom
-  LIMIT 50;
-`;
-params = [code_iris, dist];
-
+      } else {
+        /* --- bio + rayon métrique -------------------------------- */
+        const dist = parseInt(rayon, 10);
+        sql = `
+          WITH iris AS (
+            SELECT geom_2154
+            FROM decoupages.iris_grandeetendue_2022
+            WHERE code_iris = $1
+          )
+          SELECT
+            TRIM(
+              COALESCE(raison_sociale,'') ||
+              CASE WHEN COALESCE(denomination,'') <> ''
+                   THEN ' ('||denomination||')' ELSE '' END
+            ) AS nom,
+            TRIM(
+              COALESCE(addr_lieu,'') || ', ' ||
+              COALESCE(addr_cp  ,'') || ' '  ||
+              COALESCE(addr_ville,'')
+            ) AS adresse
+          FROM equipements.magasins_bio_0725 m, iris i
+          WHERE cert_etat = 'ENGAGEE'
+            AND m.geom_2154 IS NOT NULL
+            AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
+          ORDER BY nom
+          LIMIT 50;
+        `;
+        params = [code_iris, dist];
       }
 
-    /* ----------------------------------------------------------------
-     * B. AUTRES ÉQUIPEMENTS (base_2024)
-     * ---------------------------------------------------------------- */
+    /* -------------------------------------------------------------- *
+     *  B.  AUTRES ÉQUIPEMENTS (base_2024)                            *
+     * -------------------------------------------------------------- */
     } else {
       if (rayon === 'in_iris') {
-        /* --- autre + in_iris --------------------------------------- */
         sql = `
           WITH codes AS (
             SELECT typequ_codes
@@ -1549,7 +1544,6 @@ params = [code_iris, dist];
         params = [code_iris, prefix];
 
       } else {
-        /* --- autre + rayon métrique -------------------------------- */
         const dist = parseInt(rayon, 10);
         sql = `
           WITH iris AS (
@@ -1582,27 +1576,17 @@ params = [code_iris, dist];
       }
     }
 
-    console.log('Executing SQL:', sql.substring(0, 200) + '...');
-    console.log('With params:', params);
-    
+    /* Debug */
+    console.log('SQL:', sql.split('\n').slice(0,6).join(' ').trim(), '...');
+    console.log('Params:', params);
+
     const { rows } = await pool.query(sql, params);
-    
-    // Pour les magasins bio, reformater si nécessaire
-    if (prefix === 'magbio') {
-      const formattedRows = rows.map(row => ({
-        nom: row.nom,
-        adresse: row.adresse
-      }));
-      return res.json(formattedRows);
-    }
-    
+
     res.json(rows);
 
   } catch (err) {
-    console.error('Erreur dans /get_commerces_list:', err);
-    console.error('SQL était:', sql);
-    console.error('Params étaient:', params);
-    res.status(500).json({ error: 'Erreur serveur', details: err.message });
+    console.error('Erreur /get_commerces_list :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
