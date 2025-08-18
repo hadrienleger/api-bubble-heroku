@@ -1364,6 +1364,26 @@ async function fetchCommercesAll(codeIris) {
   return commerces;
 }
 
+// --- Scores d'équipements en 1 requête ---------------------------------
+async function fetchEquipScores(codeIris) {
+  const q = `
+    SELECT
+      boulang_score  AS score_boulang,
+      bouche_score   AS score_bouche,
+      superm_score   AS score_superm,
+      epicerie_score AS score_epicerie,
+      lib_score      AS score_lib,
+      cinema_score   AS score_cinema,
+      conserv_score  AS score_conserv,
+      magbio_score   AS score_magbio
+    FROM equipements.iris_equip_2024
+    WHERE code_iris = $1
+    LIMIT 1
+  `;
+  const { rows } = await pool.query(q, [codeIris]);
+  return rows[0] || {};
+}
+
 // ------------------------------------------------------------------
 // POST /get_iris_filtre  (version LITE : rapide, sans hydratation)
 // ------------------------------------------------------------------
@@ -1570,6 +1590,9 @@ app.post('/get_iris_data', async (req, res) => {
     // 5) Commerces (même structure que /get_all_commerces)
     const commerces = await fetchCommercesAll(code);
 
+    // 👉 NOUVEAU : 5bis) Scores équipements en 1 requête
+    const equipScores = await fetchEquipScores(code);
+
     // 6) Assemblage final (1 seul objet, pas de nb_iris, pas de centroid)
     const out = {
       code_iris       : base.code_iris,
@@ -1582,15 +1605,15 @@ app.post('/get_iris_data', async (req, res) => {
       securite        : base.securite ?? null,
       prix_median_m2  : base.prix_median_m2 ?? null,
       taux_creches    : base.taux_creches ?? null,
-      // scores d’équipements synthétiques (déjà calculés par buildIrisDetail si besoin)
-      score_boulang   : base.score_boulang ?? null,
-      score_bouche    : base.score_bouche ?? null,
-      score_superm    : base.score_superm ?? null,
-      score_epicerie  : base.score_epicerie ?? null,
-      score_lib       : base.score_lib ?? null,
-      score_cinema    : base.score_cinema ?? null,
-      score_conserv   : base.score_conserv ?? null,
-      score_magbio    : base.score_magbio ?? null,
+      // 🔁 Scores d'équipements (1 requête)
+      score_boulang   : equipScores.score_boulang  ?? base.score_boulang  ?? null,
+      score_bouche    : equipScores.score_bouche   ?? base.score_bouche   ?? null,
+      score_superm    : equipScores.score_superm   ?? base.score_superm   ?? null,
+      score_epicerie  : equipScores.score_epicerie ?? base.score_epicerie ?? null,
+      score_lib       : equipScores.score_lib      ?? base.score_lib      ?? null,
+      score_cinema    : equipScores.score_cinema   ?? base.score_cinema   ?? null,
+      score_conserv   : equipScores.score_conserv  ?? base.score_conserv  ?? null,
+      score_magbio    : equipScores.score_magbio   ?? base.score_magbio   ?? null,
       // BBox depuis petiteetendue
       bbox            : bbox4326 || [null, null, null, null],
       // Ajouts détaillés
