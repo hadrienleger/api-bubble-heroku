@@ -1596,7 +1596,10 @@ app.post('/get_iris_data', async (req, res) => {
       // Ajouts détaillés
       hlm,            // { nblspls, part_log_soc, txlsplai, txlsplus, txlspls, txlspli }
       ecoles,         // { "300":[...], "600":[...], "1000":[...], "2000":[...], "5000":[...] }
-      commerces       // { prefix: { in_iris:{count,items}, 300:{...}, 600:{...}, 1000:{...} }, magbio:{...} }
+      commerces,       // { prefix: { in_iris:{count,items}, 300:{...}, 600:{...}, 1000:{...} }, magbio:{...} }
+      colleges        : (Array.isArray(base.colleges) || base.colleges === 'hors-scope')
+                        ? base.colleges
+                        : []
     };
 
     return res.json(out);
