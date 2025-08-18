@@ -774,11 +774,20 @@ const sqlPivot = `
 }
 
 // --------------------------------------------------------------
-// J) Filtrage des crèches
+// J) Filtrage des crèches, ass mats, tous modes de garde
 // --------------------------------------------------------------
 function isCrechesActivated(cr) {
   if (!cr) return false;
   return cr.min != null || cr.max != null;
+}
+
+function isAssmatsActivated(am) {
+  if (!am) return false;
+  return am.min != null || am.max != null;
+}
+function isGardeTotalActivated(gt) {
+  if (!gt) return false;
+  return gt.min != null || gt.max != null;
 }
 
 async function applyCreches(irisList, crechesCrit) {
@@ -815,6 +824,74 @@ WHERE i.code_iris = ANY($1)
     irisSet: intersectArrays(irisList, irisOK),
     crechesByIris,
   };
+}
+
+// --- Taux couverture Assistantes Maternelles (txcouv_am_ind_com) -----------
+async function applyAssmats(irisList, assmatsCrit) {
+  if (!irisList.length) return { irisSet: [], assmatsByIris: {} };
+
+  const { min = null, max = null } = assmatsCrit || {};
+
+  const sql = `
+    SELECT i.code_iris,
+           cr.txcouv_am_ind_com
+    FROM decoupages.iris_grandeetendue_2022 i
+    LEFT JOIN decoupages.communes c
+           ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+    LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
+           ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
+          AND cr.annee = 2022
+    WHERE i.code_iris = ANY($1)
+      AND ($2::numeric IS NULL OR cr.txcouv_am_ind_com IS NULL OR cr.txcouv_am_ind_com >= $2)
+      AND ($3::numeric IS NULL OR cr.txcouv_am_ind_com IS NULL OR cr.txcouv_am_ind_com <= $3)
+  `;
+
+  const { rows } = await pool.query(sql, [irisList, min, max]);
+
+  const assmatsByIris = {};
+  const irisOK = [];
+
+  for (const r of rows) {
+    assmatsByIris[r.code_iris] =
+      r.txcouv_am_ind_com != null ? Number(r.txcouv_am_ind_com) : null;
+    irisOK.push(r.code_iris);
+  }
+
+  return { irisSet: intersectArrays(irisList, irisOK), assmatsByIris };
+}
+
+// --- Taux couverture TOUS MODES (txcouv_com) -------------------------------
+async function applyGardeTotal(irisList, gardeCrit) {
+  if (!irisList.length) return { irisSet: [], gardeTotalByIris: {} };
+
+  const { min = null, max = null } = gardeCrit || {};
+
+  const sql = `
+    SELECT i.code_iris,
+           cr.txcouv_com
+    FROM decoupages.iris_grandeetendue_2022 i
+    LEFT JOIN decoupages.communes c
+           ON (c.insee_com = i.insee_com OR c.insee_arm = i.insee_com)
+    LEFT JOIN education_creches.tauxcouverture_communes_2022 cr
+           ON (cr.numcom = c.insee_com OR cr.numcom = c.insee_arm)
+          AND cr.annee = 2022
+    WHERE i.code_iris = ANY($1)
+      AND ($2::numeric IS NULL OR cr.txcouv_com IS NULL OR cr.txcouv_com >= $2)
+      AND ($3::numeric IS NULL OR cr.txcouv_com IS NULL OR cr.txcouv_com <= $3)
+  `;
+
+  const { rows } = await pool.query(sql, [irisList, min, max]);
+
+  const gardeTotalByIris = {};
+  const irisOK = [];
+
+  for (const r of rows) {
+    gardeTotalByIris[r.code_iris] =
+      r.txcouv_com != null ? Number(r.txcouv_com) : null;
+    irisOK.push(r.code_iris);
+  }
+
+  return { irisSet: intersectArrays(irisList, irisOK), gardeTotalByIris };
 }
 
 // --------------------------------------------------------------
@@ -981,6 +1058,16 @@ async function buildIrisDetail(irisCodes, criteria = {}, equipCriteria = {}) {
     irisCurrent           = crechesRes.irisSet;
     const crechesByIris   = crechesRes.crechesByIris;
 
+    /* 7️⃣ bis  Assistantes maternelles (NOUVEAU) ---------------- */
+    const amRes           = await applyAssmats(irisCurrent,   criteria?.assmats);
+    irisCurrent           = amRes.irisSet;
+    const assmatsByIris   = amRes.assmatsByIris;
+
+    /* 7️⃣ ter  Tous modes de garde (NOUVEAU) -------------------- */
+    const gtRes           = await applyGardeTotal(irisCurrent, criteria?.garde_total);
+    irisCurrent           = gtRes.irisSet;
+    const gardeTotalByIris = gtRes.gardeTotalByIris;
+
     /* 8️⃣  Équipements (scores) ---------------------------------------------- */
     let scoreEquipByIris = {};      // agrège tous les scores demandés
 
@@ -1076,6 +1163,8 @@ for (const b of bboxRows) {
         colleges         : collegesByIris[iris]           ?? [],
         prix_median_m2   : prixMedianByIris[iris]         ?? null,
         taux_creches     : crechesByIris[iris]            ?? null,
+        taux_assmats     : assmatsByIris[iris]          ?? null,   // NOUVEAU
+        taux_garde_total : gardeTotalByIris[iris]       ?? null,   // NOUVEAU
         score_boulang  : scoreEquipByIris['boulang']?.[iris] ?? null,
         score_bouche   : scoreEquipByIris['bouche']?.[iris]  ?? null,
         score_superm   : scoreEquipByIris['superm']?.[iris]  ?? null,
@@ -1474,6 +1563,12 @@ app.post('/get_iris_filtre', async (req, res) => {
     // Crèches
     irisSet = await applyIf(applyCreches, isCrechesActivated(criteria?.creches), irisSet, criteria.creches);
 
+    // Assistantes maternelles (NOUVEAU)
+    irisSet = await applyIf(applyAssmats, isAssmatsActivated(criteria?.assmats), irisSet, criteria.assmats);
+
+    // Tous modes de garde confondus (NOUVEAU)
+    irisSet = await applyIf(applyGardeTotal, isGardeTotalActivated(criteria?.garde_total), irisSet, criteria.garde_total);
+
     // Équipements (scores BPE)
     if (criteria?.equipements) {
       for (const prefix of EQUIP_PREFIXES) {
@@ -1605,6 +1700,8 @@ app.post('/get_iris_data', async (req, res) => {
       securite        : base.securite ?? null,
       prix_median_m2  : base.prix_median_m2 ?? null,
       taux_creches    : base.taux_creches ?? null,
+      taux_assmats     : base.taux_assmats ?? null,
+      taux_garde_total : base.taux_garde_total ?? null,
       // 🔁 Scores d'équipements (1 requête)
       score_boulang   : equipScores.score_boulang  ?? base.score_boulang  ?? null,
       score_bouche    : equipScores.score_bouche   ?? base.score_bouche   ?? null,
