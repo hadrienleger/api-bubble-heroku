@@ -1141,7 +1141,7 @@ async function fetchEcolesAllRayons(codeIris) {
            g.secteur_public_prive_libe     AS secteur_lib,
            g.adresse_uai                   AS adresse,
            g.code_postal_uai               AS cp,
-           g.libelle_commune               AS commune,
+           g.libelle_commune               AS commune
     FROM education_ecoles.iris_ecoles_ips_rayon_2025 p
     JOIN education.geoloc_etab_2025 g
       ON g.numero_uai = p.code_rne
