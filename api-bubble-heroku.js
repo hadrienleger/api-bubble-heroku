@@ -1126,43 +1126,50 @@ async function fetchIrisBbox4326(codeIris) {
   return [Number(b.west), Number(b.south), Number(b.east), Number(b.north)];
 }
 
-/** Écoles pour tous les rayons (pré-calculées) */
+/** Écoles pour tous les rayons (en 1 requête), sans effet “filtre” */
 async function fetchEcolesAllRayons(codeIris) {
-  // On initialise la structure attendue : un objet { '300':[], '600':[], ... }
   const out = {};
   for (const r of RAYONS_ECOLES) out[String(r)] = [];
 
   const sql = `
-    SELECT r.rayon,
-           r.code_rne,
-           r.secteur,
-           r.distance_m,
-           e.appellation_officielle AS nom,
-           e.libelle_commune       AS commune,
-           e.adresse               AS adresse,
-           e.code_postal           AS cp,
-           e.nature                AS type
-    FROM education_ecoles.iris_ecoles_rayon r
-    JOIN education.geoloc_etab_2025 e
-      ON e.code_rne = r.code_rne
-    WHERE r.code_iris = $1
-      AND r.rayon     = ANY($2)
-    ORDER BY r.rayon, r.distance_m ASC
+    SELECT p.rayon,
+           p.code_rne,
+           p.ips,
+           p.secteur,
+           p.distance_m,
+           g.patronyme_uai                 AS nom,
+           g.secteur_public_prive_libe     AS secteur_lib,
+           g.adresse_uai                   AS adresse,
+           g.code_postal_uai               AS cp,
+           g.libelle_commune               AS commune,
+           g.nature                        AS type
+    FROM education_ecoles.iris_ecoles_ips_rayon_2025 p
+    JOIN education.geoloc_etab_2025 g
+      ON g.numero_uai = p.code_rne
+    WHERE p.code_iris = $1
+      AND p.rayon     = ANY($2)
+    ORDER BY p.rayon, p.distance_m ASC
   `;
+
   const { rows } = await pool.query(sql, [codeIris, RAYONS_ECOLES]);
+
   for (const r of rows) {
     const key = String(r.rayon);
     out[key].push({
-      rne: r.code_rne,
-      nom: r.nom,
-      secteur: r.secteur,
-      type: r.type,
-      distance_m: Number(r.distance_m),
-      adresse: r.adresse,
-      cp: r.cp,
-      commune: r.commune
+      rne        : r.code_rne,
+      nom        : r.nom,
+      // on expose “secteur” tel qu’en base ; si tu préfères le libellé humain :
+      secteur    : r.secteur,           // code court (PU/PR si c’est le cas)
+      secteur_lib: r.secteur_lib,       // libellé public/privé
+      type       : r.type,
+      ips        : r.ips != null ? Number(r.ips) : null,
+      distance_m : Number(r.distance_m),
+      adresse    : r.adresse,
+      cp         : r.cp,
+      commune    : r.commune
     });
   }
+
   return out;
 }
 
