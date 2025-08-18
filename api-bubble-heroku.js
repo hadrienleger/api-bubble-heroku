@@ -1101,6 +1101,263 @@ for (const b of bboxRows) {
   }
 }
 
+// ---------------------------
+// Helpers pour get_iris_data
+// ---------------------------
+
+const RAYONS_ECOLES = [300, 600, 1000, 2000, 5000];
+const RAYONS_COMM   = ['in_iris', '300', '600', '1000'];
+
+/** BBox 4326 depuis la table "petiteetendue" (comme l'ancien /iris/:code/bbox) */
+async function fetchIrisBbox4326(codeIris) {
+  const sql = `
+    SELECT
+      ST_XMin(geom) AS west,
+      ST_YMin(geom) AS south,
+      ST_XMax(geom) AS east,
+      ST_YMax(geom) AS north
+    FROM decoupages.iris_petiteetendue_2022
+    WHERE code_iris = $1
+    LIMIT 1
+  `;
+  const { rows } = await pool.query(sql, [codeIris]);
+  if (!rows.length) return null;
+  const b = rows[0];
+  return [Number(b.west), Number(b.south), Number(b.east), Number(b.north)];
+}
+
+/** Écoles pour tous les rayons (pré-calculées) */
+async function fetchEcolesAllRayons(codeIris) {
+  // On initialise la structure attendue : un objet { '300':[], '600':[], ... }
+  const out = {};
+  for (const r of RAYONS_ECOLES) out[String(r)] = [];
+
+  const sql = `
+    SELECT r.rayon,
+           r.code_rne,
+           r.secteur,
+           r.distance_m,
+           e.appellation_officielle AS nom,
+           e.libelle_commune       AS commune,
+           e.adresse               AS adresse,
+           e.code_postal           AS cp,
+           e.nature                AS type
+    FROM education_ecoles.iris_ecoles_rayon r
+    JOIN education.geoloc_etab_2025 e
+      ON e.code_rne = r.code_rne
+    WHERE r.code_iris = $1
+      AND r.rayon     = ANY($2)
+    ORDER BY r.rayon, r.distance_m ASC
+  `;
+  const { rows } = await pool.query(sql, [codeIris, RAYONS_ECOLES]);
+  for (const r of rows) {
+    const key = String(r.rayon);
+    out[key].push({
+      rne: r.code_rne,
+      nom: r.nom,
+      secteur: r.secteur,
+      type: r.type,
+      distance_m: Number(r.distance_m),
+      adresse: r.adresse,
+      cp: r.cp,
+      commune: r.commune
+    });
+  }
+  return out;
+}
+
+/** HLM détaillé (tous champs) */
+async function fetchHlmDetail(codeIris) {
+  const q = `
+    SELECT nblspls, part_log_soc, txlsplai, txlsplus, txlspls, txlspli
+    FROM filosofi.logsoc_iris_hl_2021
+    WHERE code_iris = $1
+  `;
+  const { rows } = await pool.query(q, [codeIris]);
+  if (!rows.length) return null;
+  const r = rows[0];
+  return {
+    nblspls      : r.nblspls      != null ? Number(r.nblspls) : null,
+    part_log_soc : r.part_log_soc != null ? Number(r.part_log_soc) / 100 : null,
+    txlsplai     : r.txlsplai     != null ? Number(r.txlsplai) / 100     : null,
+    txlsplus     : r.txlsplus     != null ? Number(r.txlsplus) / 100     : null,
+    txlspls      : r.txlspls      != null ? Number(r.txlspls) / 100      : null,
+    txlspli      : r.txlspli      != null ? Number(r.txlspli) / 100      : null
+  };
+}
+
+/** Commerces : reproduit la même structure que /get_all_commerces */
+async function fetchCommercesAll(codeIris) {
+  // 1) Liste des préfixes/typequ à partir de equipements.parametres
+  const prefixQuery = `
+    SELECT equip_prefix, typequ_codes
+    FROM equipements.parametres;
+  `;
+  const { rows: prefixes } = await pool.query(prefixQuery);
+  const equipPrefixes = prefixes.map(p => ({ prefix: p.equip_prefix, codes: p.typequ_codes }));
+
+  // 2) Initialiser la structure { prefix: { in_iris:{count,items}, 300:{...}, 600:{...}, 1000:{...} } }
+  const commerces = {};
+  for (const { prefix } of equipPrefixes) {
+    commerces[prefix] = {
+      in_iris: { count: 0, items: [] },
+      300    : { count: 0, items: [] },
+      600    : { count: 0, items: [] },
+      1000   : { count: 0, items: [] }
+    };
+  }
+  // S’assure que 'magbio' existe (au cas où pas dans parametres)
+  if (!commerces.magbio) {
+    commerces.magbio = {
+      in_iris: { count: 0, items: [] },
+      300    : { count: 0, items: [] },
+      600    : { count: 0, items: [] },
+      1000   : { count: 0, items: [] }
+    };
+  }
+
+  // 3) Magasins bio (source dédiée)
+  for (const rayon of RAYONS_COMM) {
+    let listSql, countSql, params;
+    if (rayon === 'in_iris') {
+      listSql = `
+        SELECT
+          TRIM(COALESCE(raison_sociale, '') || ' (' || COALESCE(denomination, '') || ')') AS nom,
+          TRIM(COALESCE(addr_lieu::text,'') || ' ' || COALESCE(addr_cp::text,'') || ' ' || COALESCE(addr_ville::text,'')) AS adresse
+        FROM equipements.magasins_bio_0725
+        WHERE code_iris = $1
+          AND cert_etat = 'ENGAGEE'
+          AND code_iris IS NOT NULL
+        ORDER BY nom
+        LIMIT 50;
+      `;
+      countSql = `
+        SELECT COUNT(*) AS total
+        FROM equipements.magasins_bio_0725
+        WHERE code_iris = $1
+          AND cert_etat = 'ENGAGEE'
+          AND code_iris IS NOT NULL;
+      `;
+      params = [codeIris];
+    } else {
+      const dist = parseInt(rayon, 10);
+      listSql = `
+        WITH iris_check AS (
+          SELECT code_iris, geom_2154
+          FROM decoupages.iris_grandeetendue_2022
+          WHERE code_iris = $1::text
+          LIMIT 1
+        )
+        SELECT
+          TRIM(COALESCE(m.raison_sociale,'') || ' (' || COALESCE(m.denomination,'') || ')') AS nom,
+          TRIM(COALESCE(m.addr_lieu::text,'') || ' ' || COALESCE(m.addr_cp::text,'') || ' ' || COALESCE(m.addr_ville::text,'')) AS adresse
+        FROM equipements.magasins_bio_0725 m
+        CROSS JOIN iris_check i
+        WHERE m.cert_etat = 'ENGAGEE'
+          AND m.geom_2154 IS NOT NULL
+          AND m.code_iris IS NOT NULL
+          AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
+        ORDER BY nom
+        LIMIT 50;
+      `;
+      countSql = `
+        WITH iris_check AS (
+          SELECT code_iris, geom_2154
+          FROM decoupages.iris_grandeetendue_2022
+          WHERE code_iris = $1::text
+          LIMIT 1
+        )
+        SELECT COUNT(*) AS total
+        FROM equipements.magasins_bio_0725 m
+        CROSS JOIN iris_check i
+        WHERE m.cert_etat = 'ENGAGEE'
+          AND m.geom_2154 IS NOT NULL
+          AND m.code_iris IS NOT NULL
+          AND ST_DWithin(m.geom_2154, i.geom_2154, $2);
+      `;
+      params = [codeIris, dist];
+    }
+    const { rows: list }   = await pool.query(listSql, params);
+    const { rows: counts } = await pool.query(countSql, params);
+    commerces.magbio[rayon] = {
+      count: parseInt(counts[0]?.total || 0, 10),
+      items: list.map(r => ({ nom: r.nom, adresse: r.adresse }))
+    };
+  }
+
+  // 4) Autres types (BPE 2024)
+  const otherPrefixes = equipPrefixes.filter(p => p.prefix !== 'magbio');
+  for (const { prefix, codes } of otherPrefixes) {
+    for (const rayon of RAYONS_COMM) {
+      let listSql, countSql, params;
+      if (rayon === 'in_iris') {
+        listSql = `
+          SELECT
+            TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
+            TRIM(COALESCE(numvoie,'') || ' ' || COALESCE(indrep,'') || ' ' ||
+                 COALESCE(typvoie,'') || ' ' || COALESCE(libvoie,'') || ' ' ||
+                 COALESCE(cadr,'')    || ' ' || COALESCE(codpos,'')  || ' ' ||
+                 COALESCE(libcom,'')
+            ) AS adresse
+          FROM equipements.base_2024
+          WHERE code_iris = $1
+            AND typequ    = ANY($2)
+          ORDER BY nom
+          LIMIT 50;
+        `;
+        countSql = `
+          SELECT COUNT(*) AS total
+          FROM equipements.base_2024
+          WHERE code_iris = $1
+            AND typequ    = ANY($2);
+        `;
+        params = [codeIris, codes];
+      } else {
+        const dist = parseInt(rayon, 10);
+        listSql = `
+          WITH iris AS (
+            SELECT geom_2154
+            FROM decoupages.iris_grandeetendue_2022
+            WHERE code_iris = $1::text
+          )
+          SELECT
+            TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
+            TRIM(COALESCE(numvoie,'') || ' ' || COALESCE(indrep,'') || ' ' ||
+                 COALESCE(typvoie,'') || ' ' || COALESCE(libvoie,'') || ' ' ||
+                 COALESCE(cadr,'')    || ' ' || COALESCE(codpos,'')  || ' ' ||
+                 COALESCE(libcom,'')
+            ) AS adresse
+          FROM equipements.base_2024 b, iris i
+          WHERE b.typequ = ANY($2)
+            AND ST_DWithin(b.geom_2154, i.geom_2154, $3)
+          ORDER BY nom
+          LIMIT 50;
+        `;
+        countSql = `
+          WITH iris AS (
+            SELECT geom_2154
+            FROM decoupages.iris_grandeetendue_2022
+            WHERE code_iris = $1::text
+          )
+          SELECT COUNT(*) AS total
+          FROM equipements.base_2024 b, iris i
+          WHERE b.typequ = ANY($2)
+            AND ST_DWithin(b.geom_2154, i.geom_2154, $3);
+        `;
+        params = [codeIris, codes, dist];
+      }
+      const { rows: list }   = await pool.query(listSql, params);
+      const { rows: counts } = await pool.query(countSql, params);
+      commerces[prefix][rayon] = {
+        count: parseInt(counts[0]?.total || 0, 10),
+        items: list.map(r => ({ nom: r.nom, adresse: r.adresse }))
+      };
+    }
+  }
+
+  return commerces;
+}
+
 // ------------------------------------------------------------------
 // POST /get_iris_filtre  (version LITE : rapide, sans hydratation)
 // ------------------------------------------------------------------
@@ -1212,18 +1469,31 @@ app.post('/get_iris_filtre', async (req, res) => {
       return res.json({ nb_iris: 0, iris: [] });
     }
 
-    // 2) Récupération LÉGÈRE des noms d’IRIS (en conservant l’ordre du set)
-    const nameSql = `
-      SELECT code_iris, nom_iris
-      FROM decoupages.iris_grandeetendue_2022
-      WHERE code_iris = ANY($1)
-      ORDER BY array_position($1::text[], code_iris)
-    `;
-    const { rows: r2 } = await pool.query(nameSql, [irisSet]);
-    const iris = r2.map(r => ({ code_iris: r.code_iris, nom_iris: r.nom_iris }));
+// 2) Récupération LÉGÈRE des noms d’IRIS ET du nom de commune
+const nameSql = `
+  SELECT i.code_iris,
+         i.nom_iris,
+         c.nom AS nom_commune
+  FROM decoupages.iris_grandeetendue_2022 i
+  LEFT JOIN LATERAL (
+    SELECT nom
+    FROM decoupages.communes c
+    WHERE c.insee_com = i.insee_com OR c.insee_arm = i.insee_com
+    LIMIT 1
+  ) c ON true
+  WHERE i.code_iris = ANY($1)
+  ORDER BY array_position($1::text[], i.code_iris)
+`;
+const { rows: r2 } = await pool.query(nameSql, [irisSet]);
 
-    console.timeEnd('TOTAL /get_iris_filtre_lite');
-    return res.json({ nb_iris: iris.length, iris });
+const iris = r2.map(r => ({
+  code_iris: r.code_iris,
+  nom_iris: r.nom_iris,
+  nom_commune: r.nom_commune || null
+}));
+
+console.timeEnd('TOTAL /get_iris_filtre_lite');
+return res.json({ nb_iris: iris.length, iris });
 
   } catch (err) {
     console.error('Erreur /get_iris_filtre (lite):', err);
@@ -1233,40 +1503,68 @@ app.post('/get_iris_filtre', async (req, res) => {
 });
 
 // ------------------------------------------------------------------
-// GET /iris/:code/bbox           (table iris_petiteetendue_2022, SRID 4326)
+// POST /get_iris_data   (renvoie TOUT pour 1 IRIS)
+// Body attendu: { code_iris: "XXXXXXXXX" }  (toujours 1 code)
 // ------------------------------------------------------------------
-app.get('/iris/:code/bbox', async (req, res) => {
-  const { code } = req.params;
-  if (!code) return res.status(400).json({ error: 'Code IRIS requis' });
-
-  const sql = `
-    SELECT
-      ST_XMin(geom) AS west,
-      ST_YMin(geom) AS south,
-      ST_XMax(geom) AS east,
-      ST_YMax(geom) AS north,
-      nom_iris
-    FROM decoupages.iris_petiteetendue_2022
-    WHERE code_iris = $1
-    LIMIT 1
-  `;
-
+app.post('/get_iris_data', async (req, res) => {
   try {
-    const { rows } = await pool.query(sql, [code]);
-    if (!rows.length) return res.status(404).json({ error: 'IRIS non trouvé' });
+    const code = String(req.body?.code_iris || '').trim();
+    if (!code) return res.status(400).json({ error: 'code_iris requis' });
 
-    const b = rows[0];
-    res.json({
-      code_iris: code,
-      nom_iris : b.nom_iris,
-      bbox     : [Number(b.west), Number(b.south), Number(b.east), Number(b.north)]
-    });
+    // 1) Base "fiche" via ta logique existante (DVF, revenus, part_log_soc, sécurité, prix, crèches, scores, etc.)
+    //    NB: on passe un tableau [code] à buildIrisDetail, on récupère le 1er (et seul) objet.
+    const baseArr = await buildIrisDetail([code], /*criteria*/ {}, /*equipCriteria*/ {});
+    const base = (Array.isArray(baseArr) && baseArr[0]) ? baseArr[0] : null;
+    if (!base) return res.status(404).json({ error: 'IRIS non trouvé' });
+
+    // 2) BBox 4326 depuis "iris_petiteetendue_2022" (écrase la bbox éventuelle)
+    const bbox4326 = await fetchIrisBbox4326(code);
+
+    // 3) HLM détaillé (tous champs)
+    const hlm = await fetchHlmDetail(code);
+
+    // 4) Écoles (multi-rayons)
+    const ecoles = await fetchEcolesAllRayons(code);
+
+    // 5) Commerces (même structure que /get_all_commerces)
+    const commerces = await fetchCommercesAll(code);
+
+    // 6) Assemblage final (1 seul objet, pas de nb_iris, pas de centroid)
+    const out = {
+      code_iris       : base.code_iris,
+      nom_iris        : base.nom_iris,
+      commune         : base.commune,           // {nom_commune, nom_dep, code_dep}
+      dvf_count       : base.dvf_count ?? 0,
+      dvf_count_total : base.dvf_count_total ?? 0,
+      mediane_rev_decl: base.mediane_rev_decl ?? null,
+      part_log_soc    : base.part_log_soc ?? null,    // conserve le champ synthétique
+      securite        : base.securite ?? null,
+      prix_median_m2  : base.prix_median_m2 ?? null,
+      taux_creches    : base.taux_creches ?? null,
+      // scores d’équipements synthétiques (déjà calculés par buildIrisDetail si besoin)
+      score_boulang   : base.score_boulang ?? null,
+      score_bouche    : base.score_bouche ?? null,
+      score_superm    : base.score_superm ?? null,
+      score_epicerie  : base.score_epicerie ?? null,
+      score_lib       : base.score_lib ?? null,
+      score_cinema    : base.score_cinema ?? null,
+      score_conserv   : base.score_conserv ?? null,
+      score_magbio    : base.score_magbio ?? null,
+      // BBox depuis petiteetendue
+      bbox            : bbox4326 || [null, null, null, null],
+      // Ajouts détaillés
+      hlm,            // { nblspls, part_log_soc, txlsplai, txlsplus, txlspls, txlspli }
+      ecoles,         // { "300":[...], "600":[...], "1000":[...], "2000":[...], "5000":[...] }
+      commerces       // { prefix: { in_iris:{count,items}, 300:{...}, 600:{...}, 1000:{...} }, magbio:{...} }
+    };
+
+    return res.json(out);
+
   } catch (err) {
-    console.error('Erreur /iris/:code/bbox :', err);
-    res.status(500).json({ error: 'Erreur serveur' });
+    console.error('Erreur /get_iris_data :', err);
+    return res.status(500).json({ error: 'Erreur serveur', details: err.message });
   }
 });
-
 
 // ------------------------------------------------------------------
 // NOUVEAU ENDPOINT : GET /iris_by_point?lat=...&lon=...
@@ -1350,30 +1648,6 @@ app.get('/iris_by_point', async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// PETIT ENDPOINT POUR RECUPERER LES ECOLES A PARTIR DE CODE IRIS ET RAYON
-// -----------------------------------------------------------------------
-app.get('/iris/:code/ecoles', async (req, res) => {
-  try {
-    const codeIris = req.params.code;
-    const rayon    = Number(req.query.rayon) || 300;   // fallback 300 m
-
-    // 1 ligne = 1 école dans le rayon demandé
-    const { ecolesByIris } = await applyEcolesRadius([codeIris], {
-      rayon,          // pas de filtrage IPS/secteur ici
-    });
-
-    res.json({
-      code_iris : codeIris,
-      rayon_m   : rayon,
-      ecoles    : ecolesByIris[codeIris] || []
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal error' });
-  }
-});
-
 // ------------------------------------------------------------------
 // PING
 // ------------------------------------------------------------------
@@ -1386,272 +1660,6 @@ app.get('/ping', async (_req, res) => {
   } catch (e) {
     console.error('Error in /ping:', e);
     res.status(500).json({ message: 'pong', db_status: 'error', error: e.message });
-  }
-});
-
-// --------------------------------------------------------------------
-// ENDPOINT POUR RECUPERER LES INFOS SUR LES HLM A PARTIR DU CODE IRIS
-// --------------------------------------------------------------------
-app.get('/get_info_hlm/:code_iris', async (req, res) => {
-  try {
-    const code = req.params.code_iris;
-
-    const query = `
-      SELECT code_iris,
-             nblspls,
-             part_log_soc,
-             txlsplai,
-             txlsplus,
-             txlspls,
-             txlspli
-      FROM filosofi.logsoc_iris_hl_2021
-      WHERE code_iris = $1
-    `;
-
-    const result = await pool.query(query, [code]);
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'IRIS non trouvé' });
-    }
-
-    const row = result.rows[0];
-    const data = {
-      code_iris     : row.code_iris,
-      nblspls       : row.nblspls      != null ? Number(row.nblspls) : null,
-      part_log_soc  : row.part_log_soc != null ? Number(row.part_log_soc) / 100 : null, // ← Divisé par 100
-      txlsplai      : row.txlsplai     != null ? Number(row.txlsplai) / 100     : null, // ← Divisé par 100
-      txlsplus      : row.txlsplus     != null ? Number(row.txlsplus) / 100     : null, // ← Divisé par 100
-      txlspls       : row.txlspls      != null ? Number(row.txlspls) / 100      : null, // ← Divisé par 100
-      txlspli       : row.txlspli      != null ? Number(row.txlspli) / 100      : null  // ← Divisé par 100
-    };
-
-    return res.json(data);
-
-  } catch (err) {
-    console.error('Erreur dans /get_info_hlm/:code_iris:', err);
-    return res.status(500).json({ error: 'Erreur interne du serveur' });
-  }
-});
-
-/* -------------------------------------------------------------------------
- * ENDPOINT COMMERCES ALL : Récupère tous les commerces pour un code IRIS
- *                          pour les rayons in_iris, 300, 600 et 1000, organisé par type
- *                          avec le nombre total de commerces par type et rayon
- * ------------------------------------------------------------------------- */
-app.get('/get_all_commerces', async (req, res) => {
-  const { code_iris } = req.query;
-
-  /* 1) Validation */
-  if (!code_iris) {
-    return res.status(400).json({ error: 'Paramètre requis : code_iris' });
-  }
-
-  const cleanedCodeIris = String(code_iris).trim();
-  if (!cleanedCodeIris || !/^[0-9]+$/.test(cleanedCodeIris)) {
-    console.log('Validation échouée pour code_iris:', code_iris);
-    return res.status(400).json({ error: 'code_iris doit être une chaîne de chiffres non vide' });
-  }
-
-  try {
-    const result = {
-      code_iris: cleanedCodeIris,
-      commerces: {}
-    };
-
-    /* 2) Récupérer la liste des préfixes d'équipements */
-    const prefixQuery = `
-      SELECT equip_prefix, typequ_codes
-      FROM equipements.parametres;
-    `;
-    const { rows: prefixes } = await pool.query(prefixQuery);
-    const equipPrefixes = prefixes.map(p => ({ prefix: p.equip_prefix, codes: p.typequ_codes }));
-
-    /* 3) Initialiser la structure pour chaque type de commerce */
-    for (const { prefix } of equipPrefixes) {
-      result.commerces[prefix] = {
-        in_iris: { count: 0, items: [] },
-        300: { count: 0, items: [] },
-        600: { count: 0, items: [] },
-        1000: { count: 0, items: [] }
-      };
-    }
-    result.commerces.magbio = {
-      in_iris: { count: 0, items: [] },
-      300: { count: 0, items: [] },
-      600: { count: 0, items: [] },
-      1000: { count: 0, items: [] }
-    };
-
-    /* 4) Traiter chaque type de commerce */
-    const rayons = ['in_iris', '300', '600', '1000'];
-
-    // Magasins bio
-    for (const rayon of rayons) {
-      let sql, params, countSql;
-      if (rayon === 'in_iris') {
-        sql = `
-          SELECT
-            TRIM(COALESCE(raison_sociale, '') || ' (' || COALESCE(denomination, '') || ')') AS nom,
-            TRIM(
-              COALESCE(addr_lieu::text, '') || ' ' ||
-              COALESCE(addr_cp::text, '') || ' ' ||
-              COALESCE(addr_ville::text, '')
-            ) AS adresse
-          FROM equipements.magasins_bio_0725
-          WHERE code_iris = $1
-            AND cert_etat = 'ENGAGEE'
-            AND code_iris IS NOT NULL
-          ORDER BY nom
-          LIMIT 50;
-        `;
-        countSql = `
-          SELECT COUNT(*) AS total
-          FROM equipements.magasins_bio_0725
-          WHERE code_iris = $1
-            AND cert_etat = 'ENGAGEE'
-            AND code_iris IS NOT NULL;
-        `;
-        params = [cleanedCodeIris];
-      } else {
-        const dist = parseInt(rayon, 10);
-        sql = `
-          WITH iris_check AS (
-            SELECT code_iris, geom_2154
-            FROM decoupages.iris_grandeetendue_2022
-            WHERE code_iris = $1::text
-            LIMIT 1
-          )
-          SELECT
-            TRIM(COALESCE(m.raison_sociale, '') || ' (' || COALESCE(m.denomination, '') || ')') AS nom,
-            TRIM(
-              COALESCE(m.addr_lieu::text, '') || ' ' ||
-              COALESCE(m.addr_cp::text, '') || ' ' ||
-              COALESCE(m.addr_ville::text, '')
-            ) AS adresse
-          FROM equipements.magasins_bio_0725 m
-          CROSS JOIN iris_check i
-          WHERE m.cert_etat = 'ENGAGEE'
-            AND m.geom_2154 IS NOT NULL
-            AND m.code_iris IS NOT NULL
-            AND ST_DWithin(m.geom_2154, i.geom_2154, $2)
-          ORDER BY nom
-          LIMIT 50;
-        `;
-        countSql = `
-          WITH iris_check AS (
-            SELECT code_iris, geom_2154
-            FROM decoupages.iris_grandeetendue_2022
-            WHERE code_iris = $1::text
-            LIMIT 1
-          )
-          SELECT COUNT(*) AS total
-          FROM equipements.magasins_bio_0725 m
-          CROSS JOIN iris_check i
-          WHERE m.cert_etat = 'ENGAGEE'
-            AND m.geom_2154 IS NOT NULL
-            AND m.code_iris IS NOT NULL
-            AND ST_DWithin(m.geom_2154, i.geom_2154, $2);
-        `;
-        params = [cleanedCodeIris, dist];
-      }
-
-      console.log(`Executing SQL for magbio, rayon ${rayon}:`, sql.substring(0, 200) + '...');
-      console.log('With params:', params);
-
-      const { rows: magbioRows } = await pool.query(sql, params);
-      const { rows: countRows } = await pool.query(countSql, params);
-      result.commerces.magbio[rayon] = {
-        count: parseInt(countRows[0]?.total || 0, 10),
-        items: magbioRows.map(row => ({ nom: row.nom, adresse: row.adresse }))
-      };
-    }
-
-    // Autres équipements
-    for (const { prefix, codes } of equipPrefixes.filter(p => p.prefix !== 'magbio')) {
-      for (const rayon of rayons) {
-        let sql, params, countSql;
-        if (rayon === 'in_iris') {
-          sql = `
-            SELECT
-              TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
-              TRIM(
-                COALESCE(numvoie,'') || ' ' ||
-                COALESCE(indrep,'') || ' ' ||
-                COALESCE(typvoie,'') || ' ' ||
-                COALESCE(libvoie,'') || ' ' ||
-                COALESCE(cadr,'') || ' ' ||
-                COALESCE(codpos,'') || ' ' ||
-                COALESCE(libcom,'')
-              ) AS adresse
-            FROM equipements.base_2024
-            WHERE code_iris = $1
-              AND typequ = ANY($2)
-            ORDER BY nom;
-          `;
-          countSql = `
-            SELECT COUNT(*) AS total
-            FROM equipements.base_2024
-            WHERE code_iris = $1
-              AND typequ = ANY($2);
-          `;
-          params = [cleanedCodeIris, codes];
-        } else {
-          const dist = parseInt(rayon, 10);
-          sql = `
-            WITH iris AS (
-              SELECT geom_2154
-              FROM decoupages.iris_grandeetendue_2022
-              WHERE code_iris = $1::text
-            )
-            SELECT
-              TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
-              TRIM(
-                COALESCE(numvoie,'') || ' ' ||
-                COALESCE(indrep,'') || ' ' ||
-                COALESCE(typvoie,'') || ' ' ||
-                COALESCE(libvoie,'') || ' ' ||
-                COALESCE(cadr,'') || ' ' ||
-                COALESCE(codpos,'') || ' ' ||
-                COALESCE(libcom,'')
-              ) AS adresse
-            FROM equipements.base_2024 b, iris i
-            WHERE b.typequ = ANY($2)
-              AND ST_DWithin(b.geom_2154, i.geom_2154, $3)
-            ORDER BY nom;
-          `;
-          countSql = `
-            WITH iris AS (
-              SELECT geom_2154
-              FROM decoupages.iris_grandeetendue_2022
-              WHERE code_iris = $1::text
-            )
-            SELECT COUNT(*) AS total
-            FROM equipements.base_2024 b, iris i
-            WHERE b.typequ = ANY($2)
-              AND ST_DWithin(b.geom_2154, i.geom_2154, $3);
-          `;
-          params = [cleanedCodeIris, codes, dist];
-        }
-
-        console.log(`Executing SQL for ${prefix}, rayon ${rayon}:`, sql.substring(0, 200) + '...');
-        console.log('With params:', params);
-
-        const { rows } = await pool.query(sql, params);
-        const { rows: countRows } = await pool.query(countSql, params);
-        result.commerces[prefix][rayon] = {
-          count: parseInt(countRows[0]?.total || 0, 10),
-          items: rows.map(row => ({ nom: row.nom, adresse: row.adresse }))
-        };
-      }
-    }
-
-    return res.json(result);
-
-  } catch (err) {
-    console.error('Erreur dans /get_all_commerces:', err);
-    console.error('SQL était:', sql);
-    console.error('Params étaient:', params);
-    res.status(500).json({ error: 'Erreur serveur', details: err.message });
   }
 });
 
