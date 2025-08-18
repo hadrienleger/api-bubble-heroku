@@ -1509,6 +1509,41 @@ return res.json({ nb_iris: iris.length, iris });
 });
 
 // ------------------------------------------------------------------
+// GET /iris/:code/bbox           (table iris_petiteetendue_2022, SRID 4326)
+// ------------------------------------------------------------------
+app.get('/iris/:code/bbox', async (req, res) => {
+  const { code } = req.params;
+  if (!code) return res.status(400).json({ error: 'Code IRIS requis' });
+
+  const sql = `
+    SELECT
+      ST_XMin(geom) AS west,
+      ST_YMin(geom) AS south,
+      ST_XMax(geom) AS east,
+      ST_YMax(geom) AS north,
+      nom_iris
+    FROM decoupages.iris_petiteetendue_2022
+    WHERE code_iris = $1
+    LIMIT 1
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, [code]);
+    if (!rows.length) return res.status(404).json({ error: 'IRIS non trouvé' });
+
+    const b = rows[0];
+    res.json({
+      code_iris: code,
+      nom_iris : b.nom_iris,
+      bbox     : [Number(b.west), Number(b.south), Number(b.east), Number(b.north)]
+    });
+  } catch (err) {
+    console.error('Erreur /iris/:code/bbox :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// ------------------------------------------------------------------
 // POST /get_iris_data   (renvoie TOUT pour 1 IRIS)
 // Body attendu: { code_iris: "XXXXXXXXX" }  (toujours 1 code)
 // ------------------------------------------------------------------
