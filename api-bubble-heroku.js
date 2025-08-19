@@ -1388,15 +1388,20 @@ async function fetchCommercesAll(codeIris) {
       if (rayon === 'in_iris') {
         listSql = `
           SELECT
-            TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
-            TRIM(COALESCE(numvoie,'') || ' ' || COALESCE(indrep,'') || ' ' ||
-                 COALESCE(typvoie,'') || ' ' || COALESCE(libvoie,'') || ' ' ||
-                 COALESCE(cadr,'')    || ' ' || COALESCE(codpos,'')  || ' ' ||
-                 COALESCE(libcom,'')
-            ) AS adresse
-          FROM equipements.base_2024
-          WHERE code_iris = $1
-            AND typequ    = ANY($2)
+            TRIM(COALESCE(b.nomrs,'') || ' ' || COALESCE(b.cnomrs,'')) AS nom,
+            TRIM(
+              COALESCE(b.numvoie,'') || ' ' ||
+              COALESCE(b.indrep,'')  || ' ' ||
+              COALESCE(b.typvoie,'') || ' ' ||
+              COALESCE(b.libvoie,'') || ' ' ||
+              COALESCE(b.cadr,'')    || ' ' ||
+              COALESCE(b.codpos,'')  || ' ' ||
+              COALESCE(b.libcom,'')
+            ) AS adresse,
+            b.typequ_libelle AS type
+          FROM equipements.base_2024 b
+          WHERE b.code_iris = $1
+            AND b.typequ    = ANY($2)
           ORDER BY nom
           LIMIT 50;
         `;
@@ -1409,25 +1414,30 @@ async function fetchCommercesAll(codeIris) {
         params = [codeIris, codes];
       } else {
         const dist = parseInt(rayon, 10);
-        listSql = `
-          WITH iris AS (
-            SELECT geom_2154
-            FROM decoupages.iris_grandeetendue_2022
-            WHERE code_iris = $1::text
-          )
-          SELECT
-            TRIM(COALESCE(nomrs,'') || ' ' || COALESCE(cnomrs,'')) AS nom,
-            TRIM(COALESCE(numvoie,'') || ' ' || COALESCE(indrep,'') || ' ' ||
-                 COALESCE(typvoie,'') || ' ' || COALESCE(libvoie,'') || ' ' ||
-                 COALESCE(cadr,'')    || ' ' || COALESCE(codpos,'')  || ' ' ||
-                 COALESCE(libcom,'')
-            ) AS adresse
-          FROM equipements.base_2024 b, iris i
-          WHERE b.typequ = ANY($2)
-            AND ST_DWithin(b.geom_2154, i.geom_2154, $3)
-          ORDER BY nom
-          LIMIT 50;
-        `;
+          listSql = `
+            WITH iris AS (
+              SELECT geom_2154
+              FROM decoupages.iris_grandeetendue_2022
+              WHERE code_iris = $1::text
+            )
+            SELECT
+              TRIM(COALESCE(b.nomrs,'') || ' ' || COALESCE(b.cnomrs,'')) AS nom,
+              TRIM(
+                COALESCE(b.numvoie,'') || ' ' ||
+                COALESCE(b.indrep,'')  || ' ' ||
+                COALESCE(b.typvoie,'') || ' ' ||
+                COALESCE(b.libvoie,'') || ' ' ||
+                COALESCE(b.cadr,'')    || ' ' ||
+                COALESCE(b.codpos,'')  || ' ' ||
+                COALESCE(b.libcom,'')
+              ) AS adresse,
+              b.typequ_libelle AS type
+            FROM equipements.base_2024 b, iris i
+            WHERE b.typequ = ANY($2)
+              AND ST_DWithin(b.geom_2154, i.geom_2154, $3)
+            ORDER BY nom
+            LIMIT 50;
+          `;
         countSql = `
           WITH iris AS (
             SELECT geom_2154
@@ -1443,9 +1453,16 @@ async function fetchCommercesAll(codeIris) {
       }
       const { rows: list }   = await pool.query(listSql, params);
       const { rows: counts } = await pool.query(countSql, params);
+
+      const items = list.map(r => ({
+        nom    : r.nom,
+        adresse: r.adresse,
+        type   : r.type || null
+      }));
+
       commerces[prefix][rayon] = {
         count: parseInt(counts[0]?.total || 0, 10),
-        items: list.map(r => ({ nom: r.nom, adresse: r.adresse }))
+        items
       };
     }
   }
