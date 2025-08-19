@@ -1748,33 +1748,25 @@ app.post('/get_iris_data', async (req, res) => {
 });
 
 // ------------------------------------------------------------------
-// NOUVEAU ENDPOINT : GET /iris_by_point?lat=...&lon=...
+// GET /iris_by_point  (version LITE : rapide, sans hydratation)
+// Params : lat, lon (obligatoires), radius_km (optionnel, défaut 0.3)
+// Retour : { nb_iris, iris: [ { code_iris, nom_iris, nom_commune } ] }
 // ------------------------------------------------------------------
-/* --------------------------------------------------------------
-   GET /iris_by_point
-   --------------------------------------------------------------
-   Params :
-      lat, lon        (obligatoires)
-      radius_km       (optionnel, défaut 0.3)
-   Retour :
-      {
-        nb_iris : n,
-        iris    : [ { … + est_cible:true/false } ],
-        communes: [ … ]
-      }
----------------------------------------------------------------- */
 app.get('/iris_by_point', async (req, res) => {
+  console.time('TOTAL /iris_by_point_lite');
   const { lat, lon, radius_km = '0.3' } = req.query;
-  if (!lat || !lon) {
+
+  if (lat == null || lon == null) {
+    console.timeEnd('TOTAL /iris_by_point_lite');
     return res.status(400).json({ error: 'lat & lon are required' });
   }
 
   try {
-    const radius_m = Number(radius_km) * 1000;     // ⇒ mètres
+    const radius_m = Number(radius_km) * 1000;
 
-    /* A) cible = l’IRIS qui contient le point ----------------- */
+    // A) IRIS cible = celui qui contient le point
     const cibleSql = `
-      SELECT code_iris, geom_2154
+      SELECT code_iris
       FROM decoupages.iris_grandeetendue_2022
       WHERE ST_Contains(
               geom_2154,
@@ -1784,11 +1776,12 @@ app.get('/iris_by_point', async (req, res) => {
     `;
     const cibleRes = await pool.query(cibleSql, [lon, lat]);
     if (!cibleRes.rows.length) {
+      console.timeEnd('TOTAL /iris_by_point_lite');
       return res.status(404).json({ error: 'IRIS not found' });
     }
     const codeCible = cibleRes.rows[0].code_iris;
 
-    /* B) voisins = IRIS coupant le disque ---------------------- */
+    // B) IRIS voisins = ceux qui coupent le disque de rayon radius_m
     const voisinsSql = `
       SELECT i.code_iris
       FROM decoupages.iris_grandeetendue_2022 i
@@ -1799,33 +1792,48 @@ app.get('/iris_by_point', async (req, res) => {
             )
     `;
     const vRes = await pool.query(voisinsSql, [lon, lat, radius_m]);
+    let irisList = vRes.rows.map(r => r.code_iris);
 
-    const irisList = vRes.rows.map(r => r.code_iris);
-    if (!irisList.includes(codeCible)) irisList.push(codeCible); // sécurité
+    // S'assurer que l'IRIS cible est présent
+    if (!irisList.includes(codeCible)) irisList.unshift(codeCible);
 
-    /* C) détail complet via buildIrisDetail -------------------- */
-    const detail = await buildIrisDetail(irisList);   // déjà existant
+    if (!irisList.length) {
+      console.timeEnd('TOTAL /iris_by_point_lite');
+      return res.json({ nb_iris: 0, iris: [] });
+    }
 
-    /* D) flag est_cible et communes --------------------------- */
-    const enriched = detail.map(r => ({
-      ...r,
-      est_cible: r.code_iris === codeCible
+    // C) Récupération légère des noms d’IRIS + nom commune (comme /get_iris_filtre lite)
+    const nameSql = `
+      SELECT i.code_iris,
+             i.nom_iris,
+             c.nom AS nom_commune
+      FROM decoupages.iris_grandeetendue_2022 i
+      LEFT JOIN LATERAL (
+        SELECT nom
+        FROM decoupages.communes c
+        WHERE c.insee_com = i.insee_com OR c.insee_arm = i.insee_com
+        LIMIT 1
+      ) c ON true
+      WHERE i.code_iris = ANY($1)
+      ORDER BY
+        CASE WHEN i.code_iris = $2 THEN 0 ELSE 1 END,   -- cible en premier
+        array_position($1::text[], i.code_iris)          -- puis l'ordre d'origine
+    `;
+    const { rows: rowsNames } = await pool.query(nameSql, [irisList, codeCible]);
+
+    const iris = rowsNames.map(r => ({
+      code_iris: r.code_iris,
+      nom_iris: r.nom_iris,
+      nom_commune: r.nom_commune || null
     }));
 
-    const communesData = await groupByCommunes(
-      irisList,
-      enriched.map(r => r.insee_com).filter(Boolean)
-    );
-
-    res.json({
-      nb_iris : enriched.length,
-      iris    : enriched,
-      communes: communesData
-    });
+    console.timeEnd('TOTAL /iris_by_point_lite');
+    return res.json({ nb_iris: iris.length, iris });
 
   } catch (err) {
-    console.error('/iris_by_point error:', err);
-    res.status(500).json({ error: 'server' });
+    console.error('/iris_by_point (lite) error:', err);
+    console.timeEnd('TOTAL /iris_by_point_lite');
+    return res.status(500).json({ error: 'server' });
   }
 });
 
