@@ -223,24 +223,23 @@ async function gatherCommuneCodes(selectedLocalities) {
 // --------------------------------------------------------------
 // D) Filtrage DVF
 // --------------------------------------------------------------
-async function getDVFCountTotal(irisList) {
-  if (!irisList.length) {
-    return {};
-  }
+async function getDVFCountTotal(irisList, annee = 2024) {
+  if (!irisList.length) return {};
 
   console.time('getDVFCountTotal');
   const sql = `
     SELECT code_iris, COUNT(*)::int AS nb_total
     FROM dvf_filtre.dvf_simplifie
     WHERE code_iris = ANY($1)
+      AND anneemut = $2
     GROUP BY code_iris
   `;
-  let res = await pool.query(sql, [irisList]);
+  const res = await pool.query(sql, [irisList, annee]);
   console.timeEnd('getDVFCountTotal');
 
-  let dvfTotalByIris = {};
-  for (let row of res.rows) {
-    dvfTotalByIris[row.code_iris] = Number(row.nb_total);
+  const dvfTotalByIris = {};
+  for (const row of res.rows) {
+    dvfTotalByIris[row.code_iris] = row.nb_total;
   }
   return dvfTotalByIris;
 }
@@ -316,6 +315,11 @@ async function applyDVF(arrayIrisLoc, dvfCriteria) {
     }
   }
   console.timeEnd('D) DVF: build query');
+
+  // Modif pour faire le filtre sur l'année
+  const annee = 2024; // ou lis-la depuis req.query.annee avec un défaut à 2024
+  whereClauses.push(`anneemut = $${values.length + 1}`);
+  values.push(annee);
 
   const wh = `WHERE ` + whereClauses.join(' AND ');
   const query = `
