@@ -92,26 +92,28 @@ function differenceArrays(arrA, arrB) {
 function isDVFActivated(dvf) {
   if (!dvf) return false;
 
+  // nettoyer les null
   if (Array.isArray(dvf.propertyTypes)) {
     dvf.propertyTypes = dvf.propertyTypes.filter(pt => pt != null);
   }
 
-  const hasType = dvf.propertyTypes && dvf.propertyTypes.length > 0;
-  const hasBudget = dvf.budget && (
-    (dvf.budget.min != null) || (dvf.budget.max != null)
-  );
-  const hasSurface = dvf.surface && (
-    (dvf.surface.min != null) || (dvf.surface.max != null)
-  );
-  const hasRooms = dvf.rooms && (
-    (dvf.rooms.min != null) || (dvf.rooms.max != null)
-  );
-  const hasYears = dvf.years && (
-    (dvf.years.min != null) || (dvf.years.max != null)
-  );
+  const hasType    = dvf.propertyTypes && dvf.propertyTypes.length > 0;
+  const hasBudget  = dvf.budget  && ((dvf.budget.min  != null) || (dvf.budget.max  != null));
+  const hasSurface = dvf.surface && ((dvf.surface.min != null) || (dvf.surface.max != null));
+  const hasRooms   = dvf.rooms   && ((dvf.rooms.min   != null) || (dvf.rooms.max   != null));
+
+  // ⚠️ Année par défaut 2024 ne doit PAS activer le filtre
+  let hasYears = false;
+  if (dvf.years && (dvf.years.min != null || dvf.years.max != null)) {
+    const minY = Number(dvf.years.min);
+    const maxY = Number(dvf.years.max);
+    const isDefault2024 = (minY === 2024) && (maxY === 2024);
+    hasYears = !isDefault2024; // n'active que si différent du défaut 2024
+  }
 
   return (hasType || hasBudget || hasSurface || hasRooms || hasYears);
 }
+
 
 function isRevenusActivated(rev) {
   if (!rev) return false;
