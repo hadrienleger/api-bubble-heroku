@@ -112,6 +112,10 @@ function isDVFActivated(dvf) {
   }
 
   return (hasType || hasBudget || hasSurface || hasRooms || hasYears);
+const activated = (hasType || hasBudget || hasSurface || hasRooms || hasYears);
+console.log('isDVFActivated flags =>', { hasType, hasBudget, hasSurface, hasRooms, hasYears, activated });
+return activated;
+
 }
 
 
@@ -1590,6 +1594,7 @@ app.post('/get_iris_filtre', async (req, res) => {
     const applyIf = async (fn, active, ...args) => active ? (await fn(...args)).irisSet : args[0];
 
     // DVF
+    console.log('isDVFActivated? =>', isDVFActivated(criteria?.dvf), 'dvf=', JSON.stringify(criteria?.dvf));
     irisSet = await applyIf(applyDVF, isDVFActivated(criteria?.dvf), irisSet, criteria.dvf);
 
     // Revenus / niveau de vie
