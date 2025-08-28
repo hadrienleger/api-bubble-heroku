@@ -248,6 +248,8 @@ async function getDVFCountTotal(irisList, annee = 2024) {
 
 async function applyDVF(arrayIrisLoc, dvfCriteria) {
   console.time('D) DVF: activation?');
+
+  // -- On garde la garde-fou existante : si DVF n'est pas "activé", on ne touche rien.
   if (!isDVFActivated(dvfCriteria)) {
     console.timeEnd('D) DVF: activation?');
     return { irisSet: arrayIrisLoc, dvfCountByIris: {} };
@@ -255,73 +257,97 @@ async function applyDVF(arrayIrisLoc, dvfCriteria) {
   console.timeEnd('D) DVF: activation?');
 
   console.time('D) DVF: build query');
+
   let whereClauses = [];
   let values = [];
   let idx = 1;
 
+  // Toujours restreindre au set d'IRIS courant
   whereClauses.push(`code_iris = ANY($${idx})`);
   values.push(arrayIrisLoc);
   idx++;
 
-  if (dvfCriteria.propertyTypes && dvfCriteria.propertyTypes.length > 0) {
+  // --- détecter de "vrais" filtres DVF (autres que l'année par défaut) ---
+  let hasType = false, hasBudget = false, hasSurface = false, hasRooms = false, hasYearsNonDefault = false;
+
+  if (dvfCriteria?.propertyTypes && dvfCriteria.propertyTypes.length > 0) {
     whereClauses.push(`codtyploc = ANY($${idx})`);
-    values.push(dvfCriteria.propertyTypes);
+    values.push(dvfCriteria.propertyTypes.filter(pt => pt != null));
     idx++;
+    hasType = true;
   }
-  if (dvfCriteria.budget) {
+
+  if (dvfCriteria?.budget) {
     if (dvfCriteria.budget.min != null) {
       whereClauses.push(`valeurfonc >= $${idx}`);
       values.push(dvfCriteria.budget.min);
       idx++;
+      hasBudget = true;
     }
     if (dvfCriteria.budget.max != null) {
       whereClauses.push(`valeurfonc <= $${idx}`);
       values.push(dvfCriteria.budget.max);
       idx++;
+      hasBudget = true;
     }
   }
-  if (dvfCriteria.surface) {
+
+  if (dvfCriteria?.surface) {
     if (dvfCriteria.surface.min != null) {
       whereClauses.push(`sbati >= $${idx}`);
       values.push(dvfCriteria.surface.min);
       idx++;
+      hasSurface = true;
     }
     if (dvfCriteria.surface.max != null) {
       whereClauses.push(`sbati <= $${idx}`);
       values.push(dvfCriteria.surface.max);
       idx++;
+      hasSurface = true;
     }
   }
-  if (dvfCriteria.rooms) {
+
+  if (dvfCriteria?.rooms) {
     if (dvfCriteria.rooms.min != null) {
       whereClauses.push(`nbpprinc >= $${idx}`);
       values.push(dvfCriteria.rooms.min);
       idx++;
+      hasRooms = true;
     }
     if (dvfCriteria.rooms.max != null) {
       whereClauses.push(`nbpprinc <= $${idx}`);
       values.push(dvfCriteria.rooms.max);
       idx++;
+      hasRooms = true;
     }
   }
-  if (dvfCriteria.years) {
-    if (dvfCriteria.years.min != null) {
-      whereClauses.push(`anneemut >= $${idx}`);
-      values.push(dvfCriteria.years.min);
-      idx++;
-    }
-    if (dvfCriteria.years.max != null) {
-      whereClauses.push(`anneemut <= $${idx}`);
-      values.push(dvfCriteria.years.max);
-      idx++;
-    }
-  }
-  console.timeEnd('D) DVF: build query');
 
-  // Modif pour faire le filtre sur l'année
-  const annee = 2024; // ou lis-la depuis req.query.annee avec un défaut à 2024
-  whereClauses.push(`anneemut = $${values.length + 1}`);
+  // --- Gestion des années : 2024 par défaut ne déclenche PAS un "vrai" filtre
+  const annee = 2024;
+  whereClauses.push(`anneemut = $${idx}`);
   values.push(annee);
+  idx++;
+
+  if (dvfCriteria?.years && (dvfCriteria.years.min != null || dvfCriteria.years.max != null)) {
+    const minY = Number(dvfCriteria.years.min);
+    const maxY = Number(dvfCriteria.years.max);
+    if (!(minY === 2024 && maxY === 2024)) {
+      // cas années ≠ défaut → c'est un vrai filtre DVF
+      hasYearsNonDefault = true;
+      // Si tu veux supporter des bornes années en plus de l’égalité 2024,
+      // tu peux ajouter ici des clauses >= / <=, mais dans ton modèle actuel
+      // on fige à 2024 pour cette version.
+    }
+  }
+
+  const filterActive = hasType || hasBudget || hasSurface || hasRooms || hasYearsNonDefault;
+
+  console.log('applyDVF flags =>', {
+    hasType, hasBudget, hasSurface, hasRooms, hasYearsNonDefault, filterActive,
+    arrayIrisLoc_len: arrayIrisLoc.length
+  });
+
+  console.timeEnd('D) DVF: build query');
 
   const wh = `WHERE ` + whereClauses.join(' AND ');
   const query = `
@@ -334,7 +360,7 @@ async function applyDVF(arrayIrisLoc, dvfCriteria) {
   let res = await pool.query(query, values);
   console.timeEnd('D) DVF: exec query');
 
-  console.log('=> DVF rowCount =', res.rowCount);
+  console.log('=> DVF rowCount =', res.rowCount, ' (filterActive=', filterActive, ')');
 
   let dvfCountByIris = {};
   let irisOK = [];
@@ -343,13 +369,13 @@ async function applyDVF(arrayIrisLoc, dvfCriteria) {
     irisOK.push(row.code_iris);
   }
 
-  console.time('D) DVF: intersection');
-  let irisSet = intersectArrays(arrayIrisLoc, irisOK);
-  console.timeEnd('D) DVF: intersection');
-  console.log('=> after DVF intersectionSet.length =', irisSet.length);
+  // ✅ NE FILTRER que si un "vrai" filtre DVF est actif
+  let irisSet = filterActive ? intersectArrays(arrayIrisLoc, irisOK) : arrayIrisLoc;
 
+  console.log('=> after DVF, irisSet.length =', irisSet.length);
   return { irisSet, dvfCountByIris };
 }
+
 
 // --------------------------------------------------------------
 // D) Filtrage DVF bis => prix du mètre carré médian
