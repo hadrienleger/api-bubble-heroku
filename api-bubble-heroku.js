@@ -7,16 +7,18 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 
-// 1) Charger .env en étant explicite sur le chemin
-require('dotenv').config({ path: __dirname + '/.env' });
+// 1) Charger .env seulement en local (pas besoin sur Heroku)
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
-// 2) Debug temporaire
-console.log("CWD:", process.cwd());
-console.log("DIRNAME:", __dirname);
-console.log("OPENAI_API_KEY présent ?", !!process.env.OPENAI_API_KEY);
-
-// 3) --- OpenAI / Zenmap AI config ---
+// 2) --- OpenAI / Zenmap AI config ---
 const OpenAI = require("openai");
+
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ OPENAI_API_KEY manquante dans process.env");
+}
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
