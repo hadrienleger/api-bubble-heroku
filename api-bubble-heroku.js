@@ -7,7 +7,15 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 
-// --- OpenAI / Zenmap AI config ---
+// 1) Charger .env en étant explicite sur le chemin
+require('dotenv').config({ path: __dirname + '/.env' });
+
+// 2) Debug temporaire
+console.log("CWD:", process.cwd());
+console.log("DIRNAME:", __dirname);
+console.log("OPENAI_API_KEY présent ?", !!process.env.OPENAI_API_KEY);
+
+// 3) --- OpenAI / Zenmap AI config ---
 const OpenAI = require("openai");
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -2355,52 +2363,65 @@ app.post('/collectivites_polygons', async (req, res) => {
 // ------------------------------------------------------------------
 // Route Zenmap AI : extraction des critères
 // ------------------------------------------------------------------
-app.post("/zenmap_ai/extract", async (req, res) => {
+app.post('/zenmap_ai/extract', async (req, res) => {
   try {
     const { zone_recherche, conversation } = req.body;
 
-    if (!conversation) {
-      return res.status(400).json({ error: "Missing 'conversation' in body" });
+    // 1) Construire le bloc d'entrée exactement comme dans tes tests OpenAI
+    const zoneBlock = [
+      '[ZONE_RECHERCHE]',
+      `mode: ${zone_recherche?.mode ?? 'null'}`,
+      `collectivites: ${JSON.stringify(zone_recherche?.collectivites ?? null)}`,
+      `radius_center: ${zone_recherche?.radius_center ? JSON.stringify(zone_recherche.radius_center) : 'null'}`,
+      `radius_km: ${zone_recherche?.radius_km ?? 'null'}`,
+      '',
+      '[CONVERSATION]',
+      conversation || ''
+    ].join('\n');
+
+    // 2) Appel OpenAI – on demande du JSON brut
+    const response = await openai.responses.create({
+      model: "gpt-4.1-mini",
+      input: [
+        { role: "system", content: extractorSystemPrompt },
+        { role: "user", content: zoneBlock }
+      ]
+    });
+
+    // 3) Récupérer le texte renvoyé (on suppose qu'il renvoie UNIQUEMENT du JSON)
+    const raw = response.output[0].content[0].text;
+
+    // (Optionnel pour debug : loguer la réponse brute)
+    console.log('RAW LLM OUTPUT (extract):', raw);
+
+    // 4) Parser le JSON
+    let criteria;
+    try {
+      criteria = JSON.parse(raw);
+    } catch (e) {
+      console.error('Erreur de parsing JSON dans /zenmap_ai/extract:', e);
+      return res.status(500).json({
+        success: false,
+        error: 'Parsing JSON failed in extractor',
+        raw
+      });
     }
 
-    const zr = zone_recherche || {
-      mode: null,
-      collectivites: [],
-      radius_center: null,
-      radius_km: null,
-    };
-
-    const inputText = `
-[ZONE_RECHERCHE]
-mode: ${zr.mode}
-collectivites: ${
-      Array.isArray(zr.collectivites)
-        ? JSON.stringify(zr.collectivites)
-        : zr.collectivites
-    }
-radius_center: ${zr.radius_center ? JSON.stringify(zr.radius_center) : "null"}
-radius_km: ${
-      zr.radius_km === null || zr.radius_km === undefined ? "null" : zr.radius_km
-    }
-
-[CONVERSATION]
-${conversation}
-`.trim();
-
-    const criteriaJson = await callExtractorModel(inputText);
-
+    // 5) Retourner les critères au client
     return res.json({
       success: true,
-      criteria: criteriaJson,
+      criteria
     });
+
   } catch (err) {
-    console.error("/zenmap_ai/extract error:", err);
+    console.error('Erreur dans /zenmap_ai/extract:', err);
     return res.status(500).json({
       success: false,
-      error: err.message || "Internal server error",
+      error: err.message
     });
   }
 });
+
 
 
 // ------------------------------------------------------------------
