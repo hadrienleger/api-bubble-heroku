@@ -7,29 +7,21 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 
-// --- OpenAI / Zenmap AI config ---
-  // Ajout de logs pour debug : Vérifions si la clé est présente AVANT d'instancier
-  console.log('Démarrage de l\'app...');
-  console.log('OPENAI_API_KEY est présente dans process.env ? ', !!process.env.OPENAI_API_KEY ? 'Oui' : 'Non');
-  console.log('Valeur partielle de OPENAI_API_KEY (pour debug, sans tout montrer) : ', process.env.OPENAI_API_KEY?.substring(0, 10) || 'Manquante');
+// 1) Charger .env seulement en local (pas besoin sur Heroku)
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
-  const OpenAI = require("openai");
+// 2) --- OpenAI / Zenmap AI config ---
+const OpenAI = require("openai");
 
-  let openai; // On déclare sans instancier tout de suite
-  try {
-    if (!process.env.OPENAI_API_KEY) {
-      console.error("❌ OPENAI_API_KEY manquante dans les Config Vars de Heroku. Vérifiez dans Settings > Config Vars.");
-      // On continue sans OpenAI pour ne pas crasher, mais les routes qui en ont besoin échoueront
-    } else {
-      openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
-      });
-      console.log('OpenAI instancié avec succès !');
-    }
-  } catch (err) {
-    console.error("Erreur lors de l'instanciation d'OpenAI :", err.message);
-    // L'app continue, mais OpenAI ne marchera pas
-  }
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ OPENAI_API_KEY manquante dans process.env");
+}
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // --- Prompt system de l'assistant extracteur Zenmap ---
 const EXTRACTOR_SYSTEM_PROMPT = `
@@ -2393,7 +2385,7 @@ app.post('/zenmap_ai/extract', async (req, res) => {
     const response = await openai.responses.create({
       model: "gpt-4.1-mini",
       input: [
-        { role: "system", content: extractorSystemPrompt },
+        { role: "system", content: EXTRACTOR_SYSTEM_PROMPT },
         { role: "user", content: zoneBlock }
       ]
     });
