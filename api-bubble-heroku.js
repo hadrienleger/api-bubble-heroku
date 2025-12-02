@@ -2766,11 +2766,11 @@ app.post('/zenmap_ai/chat', async (req, res) => {
     const assistantMessage = response.choices[0].message?.content || '';
 
     let action = 'none';
-    let cleanedReply = assistantReply;
+    let cleanedReply = assistantMessage;
 
-    if (assistantReply.includes('[[ACTION:OPEN_LOCATION]]')) {
+    if (assistantMessage.includes('[[ACTION:OPEN_LOCATION]]')) {
       action = 'open_location';
-      cleanedReply = assistantReply.replace('[[ACTION:OPEN_LOCATION]]', '').trim();
+      cleanedReply = assistantMessage.replace('[[ACTION:OPEN_LOCATION]]', '').trim();
     }
     
     return res.json({
