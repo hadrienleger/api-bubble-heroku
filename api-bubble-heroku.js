@@ -2285,6 +2285,29 @@ async function callExtractorModel(inputText) {
   return json;
 }
 
+// --- Helper Zenmap AI : construit l'input et appelle l'assistant extracteur ---
+async function runZenmapExtractor(zone_recherche, chat_transcript) {
+  const zoneBlock = zone_recherche
+    ? JSON.stringify(zone_recherche, null, 2)
+    : "null";
+
+  const inputText = `
+[ZONE_RECHERCHE]
+${zoneBlock}
+---
+[TRANSCRIPT]
+${chat_transcript}
+---
+[INSTRUCTIONS SUPPLÉMENTAIRES]
+- Ton output doit être du JSON valide uniquement, sans texte autour (pas d'explications).
+- Respecte strictement le schéma demandé dans le prompt système.
+`.trim();
+
+  // On réutilise le helper générique qui gère l'appel OpenAI + le JSON.parse
+  const json = await callExtractorModel(inputText);
+  return json;
+}
+
 // ------------------------------------------------------------------
 // POST /get_iris_filtre  (version LITE : rapide, sans hydratation)
 // ------------------------------------------------------------------
@@ -2728,66 +2751,39 @@ app.post('/collectivites_polygons', async (req, res) => {
 });
 
 // ------------------------------------------------------------------
-// Route Zenmap AI : extraction des critères
+// Route Zenmap AI : extraction des critères (sert à tester/debug)
 // ------------------------------------------------------------------
 app.post('/zenmap_ai/extract', async (req, res) => {
   try {
-    const { zone_recherche, conversation } = req.body;
+    const { chat_transcript, zone_recherche } = req.body;
 
-    // 1) Construire le bloc d'entrée exactement comme dans tes tests OpenAI
-    const zoneBlock = [
-      '[ZONE_RECHERCHE]',
-      `mode: ${zone_recherche?.mode ?? 'null'}`,
-      `collectivites: ${JSON.stringify(zone_recherche?.collectivites ?? null)}`,
-      `radius_center: ${zone_recherche?.radius_center ? JSON.stringify(zone_recherche.radius_center) : 'null'}`,
-      `radius_km: ${zone_recherche?.radius_km ?? 'null'}`,
-      '',
-      '[CONVERSATION]',
-      conversation || ''
-    ].join('\n');
-
-    // 2) Appel OpenAI – on demande du JSON brut
-    const response = await openai.responses.create({
-      model: "gpt-4.1-mini",
-      input: [
-        { role: "system", content: EXTRACTOR_SYSTEM_PROMPT },
-        { role: "user", content: zoneBlock }
-      ]
-    });
-
-    // 3) Récupérer le texte renvoyé (on suppose qu'il renvoie UNIQUEMENT du JSON)
-    const raw = response.output[0].content[0].text;
-
-    // (Optionnel pour debug : loguer la réponse brute)
-    console.log('RAW LLM OUTPUT (extract):', raw);
-
-    // 4) Parser le JSON
-    let criteria;
-    try {
-      criteria = JSON.parse(raw);
-    } catch (e) {
-      console.error('Erreur de parsing JSON dans /zenmap_ai/extract:', e);
-      return res.status(500).json({
+    if (!chat_transcript || typeof chat_transcript !== 'string') {
+      return res.status(400).json({
         success: false,
-        error: 'Parsing JSON failed in extractor',
-        raw
+        error: 'chat_transcript manquant ou invalide'
       });
     }
 
-    // 5) Retourner les critères au client
+    const extractResult = await runZenmapExtractor(zone_recherche, chat_transcript);
+
     return res.json({
       success: true,
-      criteria
+      source: 'zenmap_ai/extract',
+      zone_recherche: zone_recherche || null,
+      criteria: extractResult.criteria || extractResult, // selon ton schéma de sortie actuel
+      raw: extractResult
     });
 
-  } catch (err) {
-    console.error('Erreur dans /zenmap_ai/extract:', err);
+  } catch (error) {
+    console.error('Erreur dans /zenmap_ai/extract :', error);
     return res.status(500).json({
       success: false,
-      error: err.message
+      error: 'INTERNAL_ERROR_EXTRACTOR',
+      detail: error.message
     });
   }
 });
+
 
 // ------------------------------------------------------------------
 // Route Zenmap AI : assistant de chat
@@ -2849,6 +2845,62 @@ app.post('/zenmap_ai/chat', async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------------
+// POST /zenmap_ai/match
+//  - Entrée :
+//      { zone_recherche: { ... }, chat_transcript: "..." }
+//  - Étape 1 : appel de l'assistant extracteur -> critères structurés
+//  - Étape 2 (à venir) : calcul du matching + requêtes SQL
+// ------------------------------------------------------------------
+app.post('/zenmap_ai/match', async (req, res) => {
+  console.log('>>> [zenmap_ai/match] BODY:', JSON.stringify(req.body, null, 2));
+
+  try {
+    const { chat_transcript, zone_recherche } = req.body;
+
+    if (!chat_transcript || typeof chat_transcript !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'chat_transcript manquant ou invalide'
+      });
+    }
+
+    if (!zone_recherche || typeof zone_recherche !== 'object') {
+      return res.status(400).json({
+        success: false,
+        error: 'zone_recherche manquante ou invalide'
+      });
+    }
+
+    // 1) On appelle l'assistant extracteur
+    const extractResult = await runZenmapExtractor(zone_recherche, chat_transcript);
+
+    // On normalise un minimum la structure
+    const criteria = extractResult.criteria || extractResult;
+
+    // 2) V1 : on ne fait PAS ENCORE le matching SQL ici.
+    //    On renvoie juste ce qui sera nécessaire pour l'étape suivante.
+    //    matches = [] sera rempli dans la V2 avec les IRIS + score de matching.
+    return res.json({
+      success: true,
+      zone_recherche,
+      criteria,
+      matches: [],        // V2 : IRIS + score ici
+      debug: {
+        // pratique pour suivre ce que renvoie l'assistant
+        raw_extractor_output: extractResult
+      }
+    });
+
+  } catch (error) {
+    console.error('Erreur dans /zenmap_ai/match :', error);
+    return res.status(500).json({
+      success: false,
+      error: 'INTERNAL_ERROR_MATCH',
+      detail: error.message
+    });
+  }
+});
 
 // ------------------------------------------------------------------
 // LANCEMENT
