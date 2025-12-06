@@ -2848,7 +2848,7 @@ app.post('/zenmap_ai/chat', async (req, res) => {
 // ------------------------------------------------------------------
 // POST /zenmap_ai/match
 //  - Entrée :
-//      { zone_recherche: { ... }, chat_transcript: "..." }
+//      { zone_recherche: { ... }, conversation: "..." }
 //  - Étape 1 : appel de l'assistant extracteur -> critères structurés
 //  - Étape 2 (à venir) : calcul du matching + requêtes SQL
 // ------------------------------------------------------------------
@@ -2856,12 +2856,13 @@ app.post('/zenmap_ai/match', async (req, res) => {
   console.log('>>> [zenmap_ai/match] BODY:', JSON.stringify(req.body, null, 2));
 
   try {
-    const { chat_transcript, zone_recherche } = req.body;
+    const { conversation, zone_recherche } = req.body;
 
-    if (!chat_transcript || typeof chat_transcript !== 'string') {
+    // 1) Vérifs de base
+    if (!conversation || typeof conversation !== 'string') {
       return res.status(400).json({
         success: false,
-        error: 'chat_transcript manquant ou invalide'
+        error: 'conversation manquante ou invalide'
       });
     }
 
@@ -2872,22 +2873,19 @@ app.post('/zenmap_ai/match', async (req, res) => {
       });
     }
 
-    // 1) On appelle l'assistant extracteur
-    const extractResult = await runZenmapExtractor(zone_recherche, chat_transcript);
+    // 2) Appel de l’assistant extracteur (même helper que pour /zenmap_ai/extract)
+    const extractResult = await runZenmapExtractor(zone_recherche, conversation);
 
-    // On normalise un minimum la structure
     const criteria = extractResult.criteria || extractResult;
 
-    // 2) V1 : on ne fait PAS ENCORE le matching SQL ici.
-    //    On renvoie juste ce qui sera nécessaire pour l'étape suivante.
-    //    matches = [] sera rempli dans la V2 avec les IRIS + score de matching.
+    // 3) V1 : on NE FAIT PAS ENCORE le matching SQL.
+    //    On renvoie juste les critères structurés (et de quoi debugger).
     return res.json({
       success: true,
       zone_recherche,
       criteria,
-      matches: [],        // V2 : IRIS + score ici
+      matches: [], // V2 : on mettra ici { code_iris, score }...
       debug: {
-        // pratique pour suivre ce que renvoie l'assistant
         raw_extractor_output: extractResult
       }
     });
@@ -2901,6 +2899,7 @@ app.post('/zenmap_ai/match', async (req, res) => {
     });
   }
 });
+
 
 // ------------------------------------------------------------------
 // LANCEMENT
