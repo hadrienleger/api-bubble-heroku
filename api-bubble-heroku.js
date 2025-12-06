@@ -2765,6 +2765,8 @@ app.post('/zenmap_ai/extract', async (req, res) => {
     }
 
     const extractResult = await runZenmapExtractor(zone_recherche, chat_transcript);
+    const rawCriteria = extractResult.criteria || extractResult || {};
+    const { zone_recherche: zrFromExtractor, ...criteria } = rawCriteria;
 
     return res.json({
       success: true,
@@ -2873,22 +2875,26 @@ app.post('/zenmap_ai/match', async (req, res) => {
       });
     }
 
-    // 2) Appel de l’assistant extracteur (même helper que pour /zenmap_ai/extract)
-    const extractResult = await runZenmapExtractor(zone_recherche, conversation);
+  // 2) Appel de l’assistant extracteur (même helper que pour /zenmap_ai/extract)
+  const extractResult = await runZenmapExtractor(zone_recherche, conversation);
 
-    const criteria = extractResult.criteria || extractResult;
+  // On normalise la structure retournée par l'extracteur
+  const rawCriteria = extractResult.criteria || extractResult || {};
 
-    // 3) V1 : on NE FAIT PAS ENCORE le matching SQL.
-    //    On renvoie juste les critères structurés (et de quoi debugger).
-    return res.json({
-      success: true,
-      zone_recherche,
-      criteria,
-      matches: [], // V2 : on mettra ici { code_iris, score }...
-      debug: {
-        raw_extractor_output: extractResult
-      }
-    });
+  // On enlève zone_recherche des critères (on la garde seulement au top-level)
+  const { zone_recherche: zrFromExtractor, ...criteria } = rawCriteria;
+
+  // 3) V1 : on NE FAIT PAS ENCORE le matching SQL.
+  //    On renvoie juste les critères structurés (et de quoi debugger).
+  return res.json({
+    success: true,
+    zone_recherche,
+    criteria,
+    matches: [], // V2 : on mettra ici { code_iris, score }...
+    debug: {
+      raw_extractor_output: extractResult
+    }
+  });
 
   } catch (error) {
     console.error('Erreur dans /zenmap_ai/match :', error);
