@@ -563,7 +563,7 @@ Pour tous les critères qui ont un desired_level, tu dois aussi remplir un champ
 Règle générale :
 
 - Si le critère est utilisé (l’utilisateur exprime une préférence, même vague) :
-- desired_level doit être une des valeurs suivantes : "tres_faible", "faible", "moyen", "eleve", "tres_eleve"
+- desired_level doit être une des valeurs suivantes : "tres_faible", "assez_faible", "moyen", "assez_eleve", "tres_eleve"
 - direction doit être obligatoirement l’une de ces valeurs :
 "higher_better", "lower_better", "target_band"
 - Dans ce cas, direction ne doit jamais être null.
@@ -2381,7 +2381,7 @@ ${chat_transcript}
 
 // ⚠ IMPORTANT : ces labels doivent correspondre EXACTEMENT
 // à ce que tu as mis dans le prompt de l'assistant extracteur.
-const LEVELS = ["tres_faible", "faible", "moyen", "eleve", "tres_eleve"];
+const LEVELS = ["tres_faible", "assez_faible", "moyen", "assez_eleve", "tres_eleve"];
 
 // Bornes Jenks en dur par critère.
 // ➜ À ADAPTER avec TES vraies valeurs.
@@ -2389,27 +2389,27 @@ const JENKS_BOUNDS = {
   // Exemple fictif pour revenus déclarés (en euros/an)
   mediane_rev_decl: {
     tres_faible: { min: 0,      max: 15000 },
-    faible:      { min: 15000,  max: 22000 },
+    assez_faible:      { min: 15000,  max: 22000 },
     moyen:       { min: 22000,  max: 28000 },
-    eleve:       { min: 28000,  max: 35000 },
+    assez_eleve:       { min: 28000,  max: 35000 },
     tres_eleve:  { min: 35000,  max: 100000 }
   },
 
   // Exemple fictif pour part de logements sociaux (ratio 0–1)
   part_log_soc: {
     tres_faible: { min: 0.0,  max: 0.05 },
-    faible:      { min: 0.05, max: 0.15 },
+    assez_faible:      { min: 0.05, max: 0.15 },
     moyen:       { min: 0.15, max: 0.30 },
-    eleve:       { min: 0.30, max: 0.50 },
+    assez_eleve:       { min: 0.30, max: 0.50 },
     tres_eleve:  { min: 0.50, max: 1.00 }
   },
 
   // Exemple fictif pour sécurité (note sur 20)
   securite: {
     tres_faible: { min: 0,   max: 8 },   // quartiers très peu sûrs
-    faible:      { min: 8,   max: 12 },
+    assez_faible:      { min: 8,   max: 12 },
     moyen:       { min: 12,  max: 15 },
-    eleve:       { min: 15,  max: 17 },
+    assez_eleve:       { min: 15,  max: 17 },
     tres_eleve:  { min: 17,  max: 20 }   // quartiers les plus sûrs
   }
   // Tu pourras ajouter d'autres critères plus tard si besoin
