@@ -2599,6 +2599,42 @@ async function getIrisFromZone(zone_recherche) {
   return irisList;
 }
 
+// -------------------------
+// Helper : noms d'IRIS + communes
+// -------------------------
+async function fetchIrisNames(irisList) {
+  if (!irisList || irisList.length === 0) {
+    return {};
+  }
+
+  const nameSql = `
+    SELECT i.code_iris,
+           i.nom_iris,
+           c.nom AS nom_commune
+    FROM decoupages.iris_grandeetendue_2022 i
+    LEFT JOIN LATERAL (
+      SELECT nom
+      FROM decoupages.communes c
+      WHERE c.insee_com = i.insee_com OR c.insee_arm = i.insee_com
+      LIMIT 1
+    ) c ON true
+    WHERE i.code_iris = ANY($1)
+    ORDER BY array_position($1::text[], i.code_iris)
+  `;
+
+  const { rows } = await pool.query(nameSql, [irisList]);
+
+  // On renvoie une map code_iris -> { nom_iris, nom_commune }
+  const map = {};
+  for (const r of rows) {
+    map[r.code_iris] = {
+      nom_iris: r.nom_iris || null,
+      nom_commune: r.nom_commune || null,
+    };
+  }
+  return map;
+}
+
 // Calcul complet du matching V1 (budget + revenus + log_soc + sécurité)
 async function computeMatching(zone_recherche, criteria) {
   // 1) Récupérer tous les IRIS de la zone
@@ -2821,7 +2857,20 @@ async function computeMatching(zone_recherche, criteria) {
   // 6) Tri décroissant par score global
   matches.sort((a, b) => b.score - a.score);
 
-  return matches;
+  // Enrichissement avec nom_iris + nom_commune
+  const irisCodes = matches.map(m => m.code_iris);
+  const nameMap = await fetchIrisNames(irisCodes);
+
+  const enrichedMatches = matches.map(m => {
+    const names = nameMap[m.code_iris] || {};
+    return {
+      ...m,
+      nom_iris: names.nom_iris || null,
+      nom_commune: names.nom_commune || null,
+    };
+  });
+
+  return enrichedMatches;
 }
 
 // ------------------------------------------------------------------
