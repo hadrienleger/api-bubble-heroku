@@ -2375,6 +2375,355 @@ ${chat_transcript}
   return json;
 }
 
+// --------------------------------------------------------------
+// MATCHING V1 avec bornes Jenks en dur
+// --------------------------------------------------------------
+
+// ⚠ IMPORTANT : ces labels doivent correspondre EXACTEMENT
+// à ce que tu as mis dans le prompt de l'assistant extracteur.
+const LEVELS = ["tres_faible", "faible", "moyen", "eleve", "tres_eleve"];
+
+// Bornes Jenks en dur par critère.
+// ➜ À ADAPTER avec TES vraies valeurs.
+const JENKS_BOUNDS = {
+  // Exemple fictif pour revenus déclarés (en euros/an)
+  mediane_rev_decl: {
+    tres_faible: { min: 0,      max: 15000 },
+    faible:      { min: 15000,  max: 22000 },
+    moyen:       { min: 22000,  max: 28000 },
+    eleve:       { min: 28000,  max: 35000 },
+    tres_eleve:  { min: 35000,  max: 100000 }
+  },
+
+  // Exemple fictif pour part de logements sociaux (ratio 0–1)
+  part_log_soc: {
+    tres_faible: { min: 0.0,  max: 0.05 },
+    faible:      { min: 0.05, max: 0.15 },
+    moyen:       { min: 0.15, max: 0.30 },
+    eleve:       { min: 0.30, max: 0.50 },
+    tres_eleve:  { min: 0.50, max: 1.00 }
+  },
+
+  // Exemple fictif pour sécurité (note sur 20)
+  securite: {
+    tres_faible: { min: 0,   max: 8 },   // quartiers très peu sûrs
+    faible:      { min: 8,   max: 12 },
+    moyen:       { min: 12,  max: 15 },
+    eleve:       { min: 15,  max: 17 },
+    tres_eleve:  { min: 17,  max: 20 }   // quartiers les plus sûrs
+  }
+  // Tu pourras ajouter d'autres critères plus tard si besoin
+  // (par ex. un critère de "niveau de vie winsorisé" distinct, etc.)
+};
+
+// Récupère les bornes pour un critère donné
+function getBoundsForCriterion(critKey) {
+  return JENKS_BOUNDS[critKey] || null;
+}
+
+// Min / max global pour un critère à partir des bornes Jenks
+function getGlobalMinMax(bounds) {
+  if (!bounds) return { globalMin: null, globalMax: null };
+  const levels = Object.keys(bounds);
+  if (!levels.length) return { globalMin: null, globalMax: null };
+
+  let globalMin = Infinity;
+  let globalMax = -Infinity;
+
+  for (const lvl of levels) {
+    const b = bounds[lvl];
+    if (!b) continue;
+    if (b.min != null && b.min < globalMin) globalMin = b.min;
+    if (b.max != null && b.max > globalMax) globalMax = b.max;
+  }
+
+  if (!Number.isFinite(globalMin) || !Number.isFinite(globalMax)) {
+    return { globalMin: null, globalMax: null };
+  }
+
+  return { globalMin, globalMax };
+}
+
+// Score pour "higher_better"
+function scoreHigherBetter(value, desired_level, bounds) {
+  if (value == null || !bounds) return 0;
+
+  const { globalMin, globalMax } = getGlobalMinMax(bounds);
+  if (globalMin == null || globalMax == null || globalMax === globalMin) return 0;
+
+  // Plateau à 0 tout en bas
+  if (value <= globalMin) return 0;
+
+  const topStart = bounds.tres_eleve.min; // début du plateau à 100 %
+  const userBounds = bounds[desired_level] || bounds.moyen;
+  const userMin = userBounds.min;
+
+  // Au-dessus du début de "tres_eleve" → 1
+  if (value >= topStart) return 1;
+
+  // Entre globalMin et userMin → 0 -> 0.5
+  if (value < userMin) {
+    const denom = (userMin - globalMin) || 1e-9;
+    return 0.5 * (value - globalMin) / denom;
+  }
+
+  // Entre userMin et topStart → 0.5 -> 1
+  const denom = (topStart - userMin) || 1e-9;
+  return 0.5 + 0.5 * (value - userMin) / denom;
+}
+
+// Score pour "lower_better"
+function scoreLowerBetter(value, desired_level, bounds) {
+  if (value == null || !bounds) return 0;
+
+  const { globalMin, globalMax } = getGlobalMinMax(bounds);
+  if (globalMin == null || globalMax == null || globalMax === globalMin) return 0;
+
+  // Tout en haut → 0
+  if (value >= globalMax) return 0;
+
+  const bestMax = bounds.tres_faible.max; // haut de la zone "très faible"
+  const userBounds = bounds[desired_level] || bounds.moyen;
+  const userMax = userBounds.max;
+
+  // Très faible (<= bestMax) → 1
+  if (value <= bestMax) return 1;
+
+  // Entre bestMax et userMax → 1 -> 0.5
+  if (value <= userMax) {
+    const denom = (userMax - bestMax) || 1e-9;
+    return 0.5 + 0.5 * (userMax - value) / denom;
+  }
+
+  // Au-dessus de userMax → 0.5 -> 0
+  const denom = (globalMax - userMax) || 1e-9;
+  return 0.5 * (globalMax - value) / denom;
+}
+
+// Score pour "target_band" (on vise la bande du desired_level)
+function scoreTargetBand(value, desired_level, bounds) {
+  if (value == null || !bounds) return 0;
+
+  const { globalMin, globalMax } = getGlobalMinMax(bounds);
+  if (globalMin == null || globalMax == null || globalMax === globalMin) return 0;
+
+  const band = bounds[desired_level] || bounds.moyen;
+  const bandMin = band.min;
+  const bandMax = band.max;
+
+  // Dans la bande cible → 1
+  if (value >= bandMin && value <= bandMax) return 1;
+
+  // En dessous → 0 -> 0.5
+  if (value < bandMin) {
+    const denom = (bandMin - globalMin) || 1e-9;
+    return 0.5 * (value - globalMin) / denom;
+  }
+
+  // Au-dessus → 0.5 -> 0
+  const denom = (globalMax - bandMax) || 1e-9;
+  return 0.5 * (globalMax - value) / denom;
+}
+
+// Récupère les IRIS de la zone (collectivites ou radius)
+async function getIrisFromZone(zone_recherche) {
+  const { mode, collectivites = [], radius_center, radius_km } = zone_recherche || {};
+  let irisList = [];
+
+  if (mode === 'collectivites') {
+    // On réutilise ta logique : looksLikeDepartement + gatherCommuneCodes
+    let selectedLocalities;
+
+    if (collectivites.length && typeof collectivites[0] === 'string') {
+      selectedLocalities = collectivites.map(code => ({
+        code_insee: String(code),
+        type_collectivite: looksLikeDepartement(code) ? 'Département' : 'commune'
+      }));
+    } else {
+      selectedLocalities = collectivites.map(loc => ({
+        code_insee: String(loc.code_insee || loc.code || loc.insee_com),
+        type_collectivite:
+          loc.type_collectivite
+          || (looksLikeDepartement(loc.code_insee || loc.code || loc.insee_com)
+              ? 'Département'
+              : 'commune')
+      }));
+    }
+
+    const communesFinal = await gatherCommuneCodes(selectedLocalities);
+    if (communesFinal.length) {
+      const sql = `
+        SELECT code_iris
+        FROM decoupages.iris_grandeetendue_2022
+        WHERE insee_com = ANY($1)
+      `;
+      const { rows } = await pool.query(sql, [communesFinal]);
+      irisList = rows.map(r => r.code_iris);
+    }
+
+  } else if (mode === 'radius') {
+    if (!radius_center || radius_center.lon == null || radius_center.lat == null || !radius_km) {
+      return [];
+    }
+    const radius_m = Number(radius_km) * 1000;
+    const sql = `
+      SELECT code_iris
+      FROM decoupages.iris_grandeetendue_2022
+      WHERE ST_DWithin(
+        geom_2154,
+        ST_Transform(ST_SetSRID(ST_MakePoint($1,$2),4326),2154),
+        $3
+      )
+    `;
+    const { rows } = await pool.query(sql, [radius_center.lon, radius_center.lat, radius_m]);
+    irisList = rows.map(r => r.code_iris);
+  }
+
+  return irisList;
+}
+
+// Calcul complet du matching V1 (budget + revenus + log_soc + sécurité)
+async function computeMatching(zone_recherche, criteria) {
+  // 1) IRIS de la zone
+  const irisList = await getIrisFromZone(zone_recherche);
+  if (!irisList.length) return [];
+
+  // 2) Hydratation indicateurs (helpers existants)
+  const [
+    revRes,
+    logRes,
+    secRes,
+    prixRes
+  ] = await Promise.all([
+    applyRevenus(irisList, null),
+    applyLogSoc(irisList, null),
+    applySecurite(irisList, null),
+    applyPrixMedian(irisList, null)
+  ]);
+
+  const revenusByIris    = revRes.revenusByIris      || {};
+  const logSocByIris     = logRes.logSocByIris       || {};
+  const securiteByIris   = secRes.securiteByIris     || {};
+  const prixMedianByIris = prixRes.prixMedianByIris  || {};
+
+  const activeCriteriaConfigs = [];
+
+  // Helper pour enregistrer un critère (desired_level + direction + bounds Jenks)
+  function registerLevelCriterion(critKey, getValueFn) {
+    const crit = criteria[critKey];
+    if (!crit) return;
+
+    const { desired_level, direction } = crit;
+    if (!desired_level || !direction) return;
+    if (!LEVELS.includes(desired_level)) return;
+
+    const bounds = getBoundsForCriterion(critKey);
+    if (!bounds) return;
+
+    activeCriteriaConfigs.push({
+      critKey,
+      desired_level,
+      direction,
+      getValue: getValueFn,
+      bounds
+    });
+  }
+
+  // Sécurité
+  registerLevelCriterion('securite', (iris) => {
+    const arr = securiteByIris[iris];
+    if (!arr || !arr.length) return null;
+    return arr[0].note ?? null;
+  });
+
+  // Revenus
+  registerLevelCriterion('mediane_rev_decl', (iris) => {
+    const obj = revenusByIris[iris];
+    return obj ? obj.mediane_rev_decl : null;
+  });
+
+  // Logements sociaux
+  registerLevelCriterion('part_log_soc', (iris) => {
+    const obj = logSocByIris[iris];
+    return obj ? obj.part_log_soc : null;
+  });
+
+  // Budget
+  const budgetCrit = criteria.prixMedianM2 || null;
+
+  // 3) Score par IRIS
+  const matches = [];
+
+  for (const iris of irisList) {
+    const perCriterion = {};
+    let sumScores = 0;
+    let countScores = 0;
+
+    // Critères "A–E" (desired_level + direction)
+    for (const cfg of activeCriteriaConfigs) {
+      const v = cfg.getValue(iris);
+      let s = 0;
+
+      if (v == null || Number.isNaN(v)) {
+        s = 0;
+      } else if (cfg.direction === 'higher_better') {
+        s = scoreHigherBetter(v, cfg.desired_level, cfg.bounds);
+      } else if (cfg.direction === 'lower_better') {
+        s = scoreLowerBetter(v, cfg.desired_level, cfg.bounds);
+      } else if (cfg.direction === 'target_band') {
+        s = scoreTargetBand(v, cfg.desired_level, cfg.bounds);
+      } else {
+        s = 0;
+      }
+
+      perCriterion[cfg.critKey] = { value: v, score: s };
+      sumScores += s;
+      countScores += 1;
+    }
+
+    // Budget (prix median m2) en critère souple
+    if (budgetCrit && budgetCrit.max != null) {
+      const maxBudget = Number(budgetCrit.max);
+      const prix = prixMedianByIris[iris] ?? null;
+      let s = 0;
+
+      if (prix == null || Number.isNaN(prix)) {
+        s = 0;
+      } else if (prix <= maxBudget) {
+        s = 1;
+      } else {
+        const ratio = prix / maxBudget;
+        if (ratio <= 1.3) {
+          s = 1 - (ratio - 1) / 0.3; // 100% -> 0% entre 100% et 130% du budget
+        } else {
+          s = 0;
+        }
+      }
+
+      perCriterion.prixMedianM2 = { value: prix, score: s };
+      sumScores += s;
+      countScores += 1;
+    }
+
+    const globalScore = countScores ? (sumScores / countScores) : 0;
+
+    matches.push({
+      code_iris: iris,
+      score: globalScore,
+      scores: perCriterion
+    });
+  }
+
+  // 4) Tri décroissant par score
+  matches.sort((a, b) => b.score - a.score);
+
+  return matches;
+}
+
+
+
+
+
 // ------------------------------------------------------------------
 // POST /get_iris_filtre  (version LITE : rapide, sans hydratation)
 // ------------------------------------------------------------------
@@ -2942,26 +3291,28 @@ app.post('/zenmap_ai/match', async (req, res) => {
       });
     }
 
-  // 2) Appel de l’assistant extracteur (même helper que pour /zenmap_ai/extract)
-  const extractResult = await runZenmapExtractor(zone_recherche, conversation);
+    // 2) Appel de l’assistant extracteur
+    const extractResult = await runZenmapExtractor(zone_recherche, conversation);
 
-  // On normalise la structure retournée par l'extracteur
-  const rawCriteria = extractResult.criteria || extractResult || {};
+    // On normalise ce qu'il renvoie
+    const rawCriteria = extractResult.criteria || extractResult || {};
 
-  // On enlève zone_recherche des critères (on la garde seulement au top-level)
-  const { zone_recherche: zrFromExtractor, ...criteria } = rawCriteria;
+    // On enlève zone_recherche des critères
+    const { zone_recherche: zrFromExtractor, ...criteria } = rawCriteria;
 
-  // 3) V1 : on NE FAIT PAS ENCORE le matching SQL.
-  //    On renvoie juste les critères structurés (et de quoi debugger).
-  return res.json({
-    success: true,
-    zone_recherche,
-    criteria,
-    matches: [], // V2 : on mettra ici { code_iris, score }...
-    debug: {
-      raw_extractor_output: extractResult
-    }
-  });
+    // 3) Calcul du matching
+    const matches = await computeMatching(zone_recherche, criteria);
+
+    // 4) Réponse pour Bubble
+    return res.json({
+      success: true,
+      zone_recherche,
+      criteria,
+      matches,
+      debug: {
+        raw_extractor_output: extractResult
+      }
+    });
 
   } catch (error) {
     console.error('Erreur dans /zenmap_ai/match :', error);
@@ -2972,6 +3323,7 @@ app.post('/zenmap_ai/match', async (req, res) => {
     });
   }
 });
+
 
 
 // ------------------------------------------------------------------
