@@ -2378,59 +2378,58 @@ const LEVELS = ["tres_faible", "assez_faible", "moyen", "assez_eleve", "tres_ele
 // Bornes Jenks en dur par critère.
 // ➜ À ADAPTER avec TES vraies valeurs.
 const JENKS_BOUNDS = {
-  // Exemple fictif pour revenus déclarés (en euros/an)
+  // Revenus déclarés (exemple → à adapter à tes vrais Jenks)
   mediane_rev_decl: {
-    tres_faible: { min: 0,      max: 15000 },
-    assez_faible:      { min: 15000,  max: 22000 },
-    moyen:       { min: 22000,  max: 28000 },
-    assez_eleve:       { min: 28000,  max: 35000 },
-    tres_eleve:  { min: 35000,  max: 100000 }
+    tres_faible:  { min: 0,     max: 15000 },
+    assez_faible: { min: 15000, max: 22000 },
+    moyen:        { min: 22000, max: 28000 },
+    assez_eleve:  { min: 28000, max: 35000 },
+    tres_eleve:   { min: 35000, max: 100000 }
   },
 
-  // Exemple fictif pour part de logements sociaux (ratio 0–1)
+  // Part de logements sociaux (0–1)
   part_log_soc: {
-    tres_faible: { min: 0.0,  max: 0.05 },
-    assez_faible:      { min: 0.05, max: 0.15 },
-    moyen:       { min: 0.15, max: 0.30 },
-    assez_eleve:       { min: 0.30, max: 0.50 },
-    tres_eleve:  { min: 0.50, max: 1.00 }
+    tres_faible:  { min: 0.0,  max: 0.05 },
+    assez_faible: { min: 0.05, max: 0.15 },
+    moyen:        { min: 0.15, max: 0.30 },
+    assez_eleve:  { min: 0.30, max: 0.50 },
+    tres_eleve:   { min: 0.50, max: 1.00 }
   },
 
-  // Exemple fictif pour sécurité (note sur 20)
+  // Sécurité (note sur 20)
   securite: {
-    tres_faible: { min: 0,   max: 8 },   // quartiers très peu sûrs
-    assez_faible:      { min: 8,   max: 12 },
-    moyen:       { min: 12,  max: 15 },
-    assez_eleve:       { min: 15,  max: 17 },
-    tres_eleve:  { min: 17,  max: 20 }   // quartiers les plus sûrs
-  }
-
-  // IPS des écoles primaires dans iris_ecoles_rayon
-    // (échelles à adapter à tes Jenks réels)
-    ecoles: {
-      tres_faible:  { min:  60, max:  85 },  // IPS très faibles
-      assez_faible: { min:  85, max:  95 },
-      moyen:        { min:  95, max: 105 },
-      assez_eleve:  { min: 105, max: 115 },
-      tres_eleve:   { min: 115, max: 140 }   // très bons IPS
-    },
-
-  // Note des collèges (par ex. note Figaro sur 20)
-  colleges: {
-    tres_faible:  { min:  0,  max:  8 },
-    assez_faible: { min:  8,  max: 11 },
-    moyen:        { min: 11,  max: 13 },
-    assez_eleve:  { min: 13,  max: 15 },
-    tres_eleve:   { min: 15,  max: 20 }
+    tres_faible:  { min: 0,  max: 8 },
+    assez_faible: { min: 8,  max: 12 },
+    moyen:        { min: 12, max: 15 },
+    assez_eleve:  { min: 15, max: 17 },
+    tres_eleve:   { min: 17, max: 20 }
   },
 
-  // Taux de couverture crèches (txcouv_eaje_com), en %
+  // IPS des écoles primaires
+  ecoles: {
+    tres_faible:  { min: 60,  max: 85 },
+    assez_faible: { min: 85,  max: 95 },
+    moyen:        { min: 95,  max: 105 },
+    assez_eleve:  { min: 105, max: 115 },
+    tres_eleve:   { min: 115, max: 140 }
+  },
+
+  // Note des collèges (sur 20)
+  colleges: {
+    tres_faible:  { min: 0,  max: 8 },
+    assez_faible: { min: 8,  max: 11 },
+    moyen:        { min: 11, max: 13 },
+    assez_eleve:  { min: 13, max: 15 },
+    tres_eleve:   { min: 15, max: 20 }
+  },
+
+  // Taux de couverture crèches (en %)
   creches: {
-    tres_faible:  { min:   0, max:  20 },
-    assez_faible: { min:  20, max:  40 },
-    moyen:        { min:  40, max:  60 },
-    assez_eleve:  { min:  60, max:  80 },
-    tres_eleve:   { min:  80, max: 120 }   // >100% possible selon la méthode
+    tres_faible:  { min: 0,  max: 20 },
+    assez_faible: { min: 20, max: 40 },
+    moyen:        { min: 40, max: 60 },
+    assez_eleve:  { min: 60, max: 80 },
+    tres_eleve:   { min: 80, max: 120 }
   }
 };
 
