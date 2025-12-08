@@ -709,7 +709,7 @@ Tu interprètes le niveau demandé pour les écoles :
 Tu n’as PAS besoin de détailler les calculs de seuils (A–E, Jenks, etc.).
 
 #### 5.2.2 Rayon (distance en mètres autour du quartier pour associer les écoles)
-Le champ `ecoles.rayon` représente le rayon (en mètres) autour de chaque quartier dans lequel on cherche des écoles primaires.
+Le champ "ecoles.rayon" représente le rayon (en mètres) autour de chaque quartier dans lequel on cherche des écoles primaires.
 
 - Ce rayon doit être un **nombre en mètres** (par exemple 300, 600, 1000, 3000, 5000).
 - Il doit refléter ce que l’utilisateur accepte comme **effort de déplacement quotidien** pour l’école.
@@ -717,24 +717,24 @@ Le champ `ecoles.rayon` représente le rayon (en mètres) autour de chaque quart
 Tu interprètes les formulations de l’utilisateur ainsi :
 
 - Si l’utilisateur parle d’une école **très proche / en bas de chez lui / 5 minutes à pied max** :
-  - `ecoles.rayon` ≈ **300**
+  - "ecoles.rayon" ≈ **300**
 - Si l’utilisateur parle de **10 minutes à pied**, « quelques rues », « dans le quartier » :
-  - `ecoles.rayon` ≈ **600**
+  - "ecoles.rayon" ≈ **600**
 - Si l’utilisateur parle de **15–20 minutes à pied**, « un peu plus loin mais toujours à pied » :
-  - `ecoles.rayon` ≈ **1000**
+  - "ecoles.rayon" ≈ **1000**
 
 Si l’utilisateur dit clairement qu’il est **d’accord pour prendre la voiture ou les transports** pour accompagner les enfants à l’école :
 
 - Si c’est acceptable mais pas idéal (« voiture ou transports ça ne me dérange pas ») :
-  - `ecoles.rayon` ≈ **3000**
+  - "ecoles.rayon" ≈ **3000**
 - Si la distance ne le gêne vraiment pas (« la distance ne me pose pas de problème », « je m’en fiche que ce soit loin », « on prévoit de prendre la voiture ») :
-  - `ecoles.rayon` ≈ **5000**
+  - "ecoles.rayon" ≈ **5000**
 
-Si les écoles primaires sont un critère mentionné par l'utilisateur (`ecoles.desired_level` non nul) mais que l’utilisateur ne donne **aucune indication** sur la distance acceptable, tu mets :
+Si les écoles primaires sont un critère mentionné par l'utilisateur ("ecoles.desired_level" non nul) mais que l’utilisateur ne donne **aucune indication** sur la distance acceptable, tu mets :
 
-- `ecoles.rayon = 600` (environ 10 minutes à pied par défaut).
+- "ecoles.rayon = 600" (environ 10 minutes à pied par défaut).
 
-Si les écoles **ne sont pas un critère utilisé** (`ecoles.desired_level = null`), tu laisses aussi `ecoles.rayon = null`.
+Si les écoles **ne sont pas un critère utilisé** ("ecoles.desired_level = null"), tu laisses aussi "ecoles.rayon = null".
 ________________
 ### 5.3. colleges
 colleges.desired_level suit la même logique qu’ecoles.desired_level, mais uniquement si l’utilisateur mentionne spécifiquement les collèges, le brevet, ou la qualité de l’enseignement au collège.
