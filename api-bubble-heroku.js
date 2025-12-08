@@ -2608,6 +2608,7 @@ async function computeMatching(zone_recherche, criteria) {
     return [];
   }
 
+  // 2) Hydratation des indicateurs
   const ecolesCriteria = criteria.ecoles || {};
 
   // Rayon par défaut si non fourni par l’assistant extracteur :
@@ -2617,7 +2618,6 @@ async function computeMatching(zone_recherche, criteria) {
     rayonEcoles = 600;
   }
 
-  // 2) Hydratation des indicateurs
   const [
     revRes,
     logRes,
@@ -2627,16 +2627,16 @@ async function computeMatching(zone_recherche, criteria) {
     collegesRes,
     crechesRes
   ] = await Promise.all([
-    applyRevenus(irisList, null),                   // revenusByIris
-    applyLogSoc(irisList, null),                    // logSocByIris
-    applySecurite(irisList, null),                  // securiteByIris
-    applyPrixMedian(irisList, null),                // prixMedianByIris
+    applyRevenus(irisList, null),
+    applyLogSoc(irisList, null),
+    applySecurite(irisList, null),
+    applyPrixMedian(irisList, null),
     applyEcolesRadius(irisList, {
       ...ecolesCriteria,
       rayon: rayonEcoles
     }),
-    applyColleges(irisList, null),                  // collegesByIris
-    applyCreches(irisList, null)                    // crechesByIris
+    applyColleges(irisList, null),
+    applyCreches(irisList, null)
   ]);
 
   const revenusByIris     = revRes.revenusByIris        || {};
