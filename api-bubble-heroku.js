@@ -3420,59 +3420,62 @@ app.post('/zenmap_ai/chat', async (req, res) => {
 //  - Étape 2 (à venir) : calcul du matching + requêtes SQL
 // ------------------------------------------------------------------
 app.post('/zenmap_ai/match', async (req, res) => {
-  console.log('>>> [zenmap_ai/match] BODY:', JSON.stringify(req.body, null, 2));
-
   try {
-    const { conversation, zone_recherche } = req.body;
+    // 1) Récup body
+    const { zone_recherche, conversation } = req.body;
 
-    // 1) Vérifs de base
-    if (!conversation || typeof conversation !== 'string') {
-      return res.status(400).json({
-        success: false,
-        error: 'conversation manquante ou invalide'
-      });
-    }
+    // 2) Appel assistant extracteur -> criteria
+    const extractResult = await callExtractor(conversation, zone_recherche);
+    const criteria = extractResult.criteria || extractResult;
 
-    if (!zone_recherche || typeof zone_recherche !== 'object') {
-      return res.status(400).json({
-        success: false,
-        error: 'zone_recherche manquante ou invalide'
-      });
-    }
-
-    // 2) Appel de l’assistant extracteur
-    const extractResult = await runZenmapExtractor(zone_recherche, conversation);
-
-    // On normalise ce qu'il renvoie
-    const rawCriteria = extractResult.criteria || extractResult || {};
-
-    // On enlève zone_recherche des critères
-    const { zone_recherche: zrFromExtractor, ...criteria } = rawCriteria;
-
-    // 3) Calcul du matching
+    // 3) Calcul du matching (liste plate de quartiers)
     const matches = await computeMatching(zone_recherche, criteria);
+
+    // 3bis) Regrouper par commune
+    const communesMap = new Map();
+
+    for (const m of matches) {
+      const nomCommune = m.nom_commune || 'Commune inconnue';
+
+      if (!communesMap.has(nomCommune)) {
+        communesMap.set(nomCommune, {
+          nom_commune: nomCommune,
+          best_score: m.score,
+          nb_quartiers: 0,
+          quartiers: []
+        });
+      }
+
+      const entry = communesMap.get(nomCommune);
+      entry.nb_quartiers += 1;
+
+      if (m.score > entry.best_score) {
+        entry.best_score = m.score;
+      }
+
+      entry.quartiers.push(m);
+    }
+
+    const communes = Array.from(communesMap.values()).sort(
+      (a, b) => b.best_score - a.best_score
+    );
 
     // 4) Réponse pour Bubble
     return res.json({
       success: true,
       zone_recherche,
       criteria,
-      matches,
+      communes,                          // ✅ seul bloc principal de résultats
       debug: {
-        raw_extractor_output: extractResult
+        raw_extractor_output: extractResult,
+        nb_matches: matches.length       // info légère, pas la liste complète
       }
     });
-
-  } catch (error) {
-    console.error('Erreur dans /zenmap_ai/match :', error);
-    return res.status(500).json({
-      success: false,
-      error: 'INTERNAL_ERROR_MATCH',
-      detail: error.message
-    });
+  } catch (err) {
+    console.error('Erreur /zenmap_ai/match:', err);
+    return res.status(500).json({ success: false, error: 'server', details: err.message });
   }
 });
-
 
 
 // ------------------------------------------------------------------
