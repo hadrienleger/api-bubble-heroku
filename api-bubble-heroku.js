@@ -2375,6 +2375,15 @@ ${chat_transcript}
 // à ce que tu as mis dans le prompt de l'assistant extracteur.
 const LEVELS = ["tres_faible", "assez_faible", "moyen", "assez_eleve", "tres_eleve"];
 
+// Libellés en français pour les niveaux absolus
+const LEVEL_LABELS_FR = {
+  tres_faible: 'Très faible',
+  assez_faible: 'Faible',
+  moyen: 'Moyen',
+  assez_eleve: 'Assez élevé',
+  tres_eleve: 'Très élevé'
+};
+
 // Bornes Jenks en dur par critère.
 // ➜ À ADAPTER avec TES vraies valeurs.
 const JENKS_BOUNDS = {
@@ -2459,6 +2468,39 @@ function getGlobalMinMax(bounds) {
   }
 
   return { globalMin, globalMax };
+}
+
+/**
+ * Retourne le niveau absolu (tres_faible, assez_faible, moyen, assez_eleve, tres_eleve)
+ * pour une valeur donnée d’un critère, en utilisant JENKS_BOUNDS.
+ */
+function getAbsoluteLevelCode(critKey, value) {
+  if (value == null || Number.isNaN(value)) return null;
+
+  const bounds = JENKS_BOUNDS[critKey];
+  if (!bounds) return null;
+
+  const { globalMin, globalMax } = getGlobalMinMax(bounds);
+
+  // Cas extrêmes : on claque directement au plus bas / plus haut
+  if (globalMin != null && value <= globalMin) return 'tres_faible';
+  if (globalMax != null && value >= globalMax) return 'tres_eleve';
+
+  // Recherche du niveau dont l’intervalle [min, max] contient la valeur
+  for (const lvl of LEVELS) {
+    const b = bounds[lvl];
+    if (!b) continue;
+
+    const min = (typeof b.min === 'number') ? b.min : -Infinity;
+    const max = (typeof b.max === 'number') ? b.max : Infinity;
+
+    if (value >= min && value <= max) {
+      return lvl;
+    }
+  }
+
+  // Si rien ne matche exactement (problèmes de décimales), on ne renvoie rien
+  return null;
 }
 
 // Score pour "higher_better"
@@ -2792,34 +2834,52 @@ async function computeMatching(zone_recherche, criteria) {
   const budgetCrit = criteria.prixMedianM2 || null;
 
   // 5) Calcul du score pour chaque IRIS
-  const matches = [];
+const matches = [];
 
-  for (const iris of irisList) {
-    const perCriterion = {};
-    let sumScores = 0;
-    let countScores = 0;
+for (const iris of irisList) {
+  const perCriterion = {};
+  let sumScores = 0;
+  let countScores = 0;
 
-    // a) Critères de type niveau (desired_level + direction + bornes Jenks)
-    for (const cfg of activeCriteriaConfigs) {
-      const v = cfg.getValue(iris);
-      let s = 0;
+  // a) Critères de type niveau (desired_level + direction + bornes Jenks)
+  for (const cfg of activeCriteriaConfigs) {
+    const v = cfg.getValue(iris);
+    let s = 0;
 
-      if (v == null || Number.isNaN(v)) {
-        s = 0;
-      } else if (cfg.direction === 'higher_better') {
-        s = scoreHigherBetter(v, cfg.desired_level, cfg.bounds);
-      } else if (cfg.direction === 'lower_better') {
-        s = scoreLowerBetter(v, cfg.desired_level, cfg.bounds);
-      } else if (cfg.direction === 'target_band') {
-        s = scoreTargetBand(v, cfg.desired_level, cfg.bounds);
-      } else {
-        s = 0;
-      }
-
-      perCriterion[cfg.critKey] = { value: v, score: s };
-      sumScores += s;
-      countScores += 1;
+    if (v == null || Number.isNaN(v)) {
+      s = 0;
+    } else if (cfg.direction === 'higher_better') {
+      s = scoreHigherBetter(v, cfg.desired_level, cfg.bounds);
+    } else if (cfg.direction === 'lower_better') {
+      s = scoreLowerBetter(v, cfg.desired_level, cfg.bounds);
+    } else if (cfg.direction === 'target_band') {
+      s = scoreTargetBand(v, cfg.desired_level, cfg.bounds);
+    } else {
+      s = 0;
     }
+
+    // 🔹 Nouveau : niveau absolu dans le quartier
+    const level_code =
+      (v == null || Number.isNaN(v))
+        ? null
+        : getAbsoluteLevelCode(cfg.critKey, v);  // cf. helper ajouté plus haut
+
+    const level_label =
+      level_code
+        ? (LEVEL_LABELS_FR[level_code] || level_code)
+        : null;
+
+    // 🔹 On enrichit l’objet critère avec ces infos
+    perCriterion[cfg.critKey] = {
+      value: v,        // valeur brute (ex : 15 pour la sécurité)
+      score: s,        // score de matching (0–1) vs souhait utilisateur
+      level_code,      // ex : "tres_eleve"
+      level_label      // ex : "Très élevé"
+    };
+
+    sumScores += s;
+    countScores += 1;
+  }
 
     // b) Budget – prix médian m² vs budget max
     if (budgetCrit && budgetCrit.max != null) {
