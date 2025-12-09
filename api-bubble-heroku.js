@@ -3417,21 +3417,48 @@ app.post('/zenmap_ai/chat', async (req, res) => {
 //  - Entrée :
 //      { zone_recherche: { ... }, conversation: "..." }
 //  - Étape 1 : appel de l'assistant extracteur -> critères structurés
-//  - Étape 2 (à venir) : calcul du matching + requêtes SQL
+//  - Étape 2 : calcul du matching -> liste de quartiers
+//  - Étape 3 : regroupement par commune -> structure orientée "communes"
 // ------------------------------------------------------------------
 app.post('/zenmap_ai/match', async (req, res) => {
+  console.log('>>> [zenmap_ai/match] BODY:', JSON.stringify(req.body, null, 2));
+
   try {
-    // 1) Récup body
-    const { zone_recherche, conversation } = req.body;
+    const { conversation, zone_recherche } = req.body;
 
-    // 2) Appel assistant extracteur -> criteria
-    const extractResult = await callExtractor(conversation, zone_recherche);
-    const criteria = extractResult.criteria || extractResult;
+    // 1) Vérifs de base
+    if (!conversation || typeof conversation !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'conversation manquante ou invalide'
+      });
+    }
 
-    // 3) Calcul du matching (liste plate de quartiers)
+    if (!zone_recherche || typeof zone_recherche !== 'object') {
+      return res.status(400).json({
+        success: false,
+        error: 'zone_recherche manquante ou invalide'
+      });
+    }
+
+    // 2) Appel de l’assistant extracteur (helper déjà défini plus haut)
+    //    runZenmapExtractor(zone_recherche, chat_transcript)
+    const extractResult = await runZenmapExtractor(zone_recherche, conversation);
+
+    // L’extracteur renvoie :
+    // - soit { criteria: { ... }, ... }
+    // - soit directement { prixMedianM2: {...}, securite: {...}, ... }
+    const rawCriteria = extractResult.criteria || extractResult || {};
+
+    // On enlève zone_recherche des critères si jamais le modèle l’a remis dedans
+    const { zone_recherche: zrFromExtractor, ...criteria } = rawCriteria;
+
+    // 3) Calcul du matching quartier par quartier
+    //    computeMatching() est déjà défini plus haut et renvoie une liste plate :
+    //    [{ code_iris, nom_iris, nom_commune, score, scores: {...} }, ...]
     const matches = await computeMatching(zone_recherche, criteria);
 
-    // 3bis) Regrouper par commune
+    // 3bis) Regrouper par commune pour faciliter l’affichage côté Bubble
     const communesMap = new Map();
 
     for (const m of matches) {
@@ -3440,7 +3467,7 @@ app.post('/zenmap_ai/match', async (req, res) => {
       if (!communesMap.has(nomCommune)) {
         communesMap.set(nomCommune, {
           nom_commune: nomCommune,
-          best_score: m.score,
+          best_score: m.score,  // meilleur matching parmi les quartiers de la commune
           nb_quartiers: 0,
           quartiers: []
         });
@@ -3460,22 +3487,27 @@ app.post('/zenmap_ai/match', async (req, res) => {
       (a, b) => b.best_score - a.best_score
     );
 
-    // 4) Réponse pour Bubble
+    // 4) Réponse pour Bubble : on ne renvoie plus "matches" brut
     return res.json({
       success: true,
       zone_recherche,
       criteria,
-      communes,                          // ✅ seul bloc principal de résultats
+      communes,
       debug: {
         raw_extractor_output: extractResult,
-        nb_matches: matches.length       // info légère, pas la liste complète
+        nb_matches: matches.length
       }
     });
-  } catch (err) {
-    console.error('Erreur /zenmap_ai/match:', err);
-    return res.status(500).json({ success: false, error: 'server', details: err.message });
+  } catch (error) {
+    console.error('Erreur dans /zenmap_ai/match :', error);
+    return res.status(500).json({
+      success: false,
+      error: 'server',
+      details: error.message
+    });
   }
 });
+
 
 
 // ------------------------------------------------------------------
