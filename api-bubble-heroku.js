@@ -3445,16 +3445,29 @@ app.post('/zenmap_ai/chat', async (req, res) => {
 
     const assistantMessage = response.choices[0].message?.content || '';
 
-    // --- nouvelle logique TAG ---
+    // --- logique TAGS techniques ---
+    // Par défaut : aucune action spéciale
     let action = 'none';
     let cleanedReply = assistantMessage;
 
-    if (assistantMessage.includes('[[ACTION:OPEN_LOCATION]]')) {
+    // 1) On détecte tous les tags possibles
+    const hasOpenLocation = assistantMessage.includes('[[ACTION:OPEN_LOCATION]]');
+    const hasRunSearch    = assistantMessage.includes('[[ACTION:RUN_SEARCH]]');
+
+    // 2) Priorité : si jamais les deux sont présents (théoriquement non),
+    //    on considère que RUN_SEARCH est prioritaire.
+    if (hasRunSearch) {
+      action = 'run_search';
+    } else if (hasOpenLocation) {
       action = 'open_location';
-      cleanedReply = assistantMessage
-        .replace('[[ACTION:OPEN_LOCATION]]', '')
-        .trim();
     }
+
+    // 3) On nettoie le message pour ne plus afficher les tags à l'utilisateur
+    cleanedReply = assistantMessage
+      .replace('[[ACTION:OPEN_LOCATION]]', '')
+      .replace('[[ACTION:RUN_SEARCH]]', '')
+      .trim();
+
 
     // 👇 renvoyer la nouvelle structure
     return res.json({
