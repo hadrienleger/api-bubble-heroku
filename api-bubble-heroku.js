@@ -2951,7 +2951,7 @@ async function computeMatching(zone_recherche, criteria) {
     });
   }
 
-// 6) Tri + enrichissement des noms d’IRIS (inchangé)
+  // 6) Tri + enrichissement des noms d’IRIS (inchangé)
   matches.sort((a, b) => b.score - a.score);
   const irisCodes = matches.map(m => m.code_iris);
   const nameMap = await fetchIrisNames(irisCodes);
@@ -2966,7 +2966,7 @@ async function computeMatching(zone_recherche, criteria) {
   });
 
   return enrichedMatches;
-
+}
 
 // ------------------------------------------------------------------
 // POST /get_iris_filtre  (version LITE : rapide, sans hydratation)
