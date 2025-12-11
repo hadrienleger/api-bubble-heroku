@@ -2769,122 +2769,128 @@ async function computeMatching(zone_recherche, criteria) {
   // Crèches : une valeur unique par IRIS (taux couverture)
   // crechesByIris[iris] est déjà un nombre ou null.
 
-  // 4) Préparation des critères actifs (desired_level + direction + bornes Jenks)
+  // 4) Préparation des critères (actifs + descriptifs)
 
+  // 4.1. Toutes les fonctions "getValue" pour les critères de type niveau
+  //      (qu'ils soient utilisés ou non dans le matching)
+  const LEVEL_CRITERIA_GETTERS = {
+    // Sécurité (note sur 20)
+    securite: (iris) => {
+      const arr = securiteByIris[iris];
+      if (!arr || !arr.length) return null;
+      return arr[0].note ?? null;
+    },
+
+    // Revenus déclarés
+    mediane_rev_decl: (iris) => {
+      const obj = revenusByIris[iris];
+      return obj ? obj.mediane_rev_decl : null;
+    },
+
+    // Logements sociaux (%)
+    part_log_soc: (iris) => {
+      const obj = logSocByIris[iris];
+      return obj ? obj.part_log_soc : null;
+    },
+
+    // Écoles primaires (meilleure IPS dans le rayon)
+    ecoles: (iris) => {
+      const v = bestEcoleIpsByIris[iris];
+      return v != null ? v : null;
+    },
+
+    // Collèges (meilleure note sur 20)
+    colleges: (iris) => {
+      const v = bestCollegeNoteByIris[iris];
+      return v != null ? v : null;
+    },
+
+    // Crèches (taux de couverture)
+    creches: (iris) => {
+      const v = crechesByIris[iris];
+      return v != null ? v : null;
+    },
+  };
+
+  // 4.2. Liste des critères VRAIMENT pris en compte dans le matching global
   const activeCriteriaConfigs = [];
 
-  function registerLevelCriterion(critKey, getValueFn) {
+  for (const [critKey, getValueFn] of Object.entries(LEVEL_CRITERIA_GETTERS)) {
     const crit = criteria[critKey];
-    if (!crit) return;
+    if (!crit) continue;
 
     const { desired_level, direction } = crit;
-    if (!desired_level || !direction) return;
-    if (!LEVELS.includes(desired_level)) return;
+    if (!desired_level || !direction) continue;
+    if (!LEVELS.includes(desired_level)) continue;
 
     const bounds = getBoundsForCriterion(critKey);
-    if (!bounds) return;
+    if (!bounds) continue;
 
     activeCriteriaConfigs.push({
       critKey,
       desired_level,
       direction,
       getValue: getValueFn,
-      bounds
+      bounds,
     });
   }
-
-  // Sécurité (note sur 20)
-  registerLevelCriterion('securite', (iris) => {
-    const arr = securiteByIris[iris];
-    if (!arr || !arr.length) return null;
-    return arr[0].note ?? null;
-  });
-
-  // Revenus déclarés
-  registerLevelCriterion('mediane_rev_decl', (iris) => {
-    const obj = revenusByIris[iris];
-    return obj ? obj.mediane_rev_decl : null;
-  });
-
-  // Logements sociaux (part_log_soc, ratio 0–1)
-  registerLevelCriterion('part_log_soc', (iris) => {
-    const obj = logSocByIris[iris];
-    return obj ? obj.part_log_soc : null;
-  });
-
-  // Écoles primaires (IPS max dans le rayon)
-  registerLevelCriterion('ecoles', (iris) => {
-    const v = bestEcoleIpsByIris[iris];
-    return v != null ? v : null;
-  });
-
-  // Collèges (meilleure note sur 20)
-  registerLevelCriterion('colleges', (iris) => {
-    const v = bestCollegeNoteByIris[iris];
-    return v != null ? v : null;
-  });
-
-  // Crèches (taux de couverture)
-  registerLevelCriterion('creches', (iris) => {
-    const v = crechesByIris[iris];
-    return v != null ? v : null;
-  });
 
   // Budget (prix median m2) – traitement spécifique
   const budgetCrit = criteria.prixMedianM2 || null;
 
   // 5) Calcul du score pour chaque IRIS
-const matches = [];
+  const matches = [];
 
-for (const iris of irisList) {
-  const perCriterion = {};
-  let sumScores = 0;
-  let countScores = 0;
+  for (const iris of irisList) {
+    const perCriterion = {};
+    let sumScores = 0;
+    let countScores = 0;
 
-  // a) Critères de type niveau (desired_level + direction + bornes Jenks)
-  for (const cfg of activeCriteriaConfigs) {
-    const v = cfg.getValue(iris);
-    let s = 0;
+    // a) Critères de type niveau (desired_level + direction + bornes Jenks)
+    for (const cfg of activeCriteriaConfigs) {
+      const v = cfg.getValue(iris);
+      let s = 0;
 
-    if (v == null || Number.isNaN(v)) {
-      s = 0;
-    } else if (cfg.direction === 'higher_better') {
-      s = scoreHigherBetter(v, cfg.desired_level, cfg.bounds);
-    } else if (cfg.direction === 'lower_better') {
-      s = scoreLowerBetter(v, cfg.desired_level, cfg.bounds);
-    } else if (cfg.direction === 'target_band') {
-      s = scoreTargetBand(v, cfg.desired_level, cfg.bounds);
-    } else {
-      s = 0;
+      if (v == null || Number.isNaN(v)) {
+        s = 0;
+      } else if (cfg.direction === 'higher_better') {
+        s = scoreHigherBetter(v, cfg.desired_level, cfg.bounds);
+      } else if (cfg.direction === 'lower_better') {
+        s = scoreLowerBetter(v, cfg.desired_level, cfg.bounds);
+      } else if (cfg.direction === 'target_band') {
+        s = scoreTargetBand(v, cfg.desired_level, cfg.bounds);
+      } else {
+        s = 0;
+      }
+
+      // Niveau absolu dans le quartier
+      const level_code =
+        (v == null || Number.isNaN(v))
+          ? null
+          : getAbsoluteLevelCode(cfg.critKey, v);
+
+      const level_label =
+        level_code
+          ? (LEVEL_LABELS_FR[level_code] || level_code)
+          : null;
+
+      perCriterion[cfg.critKey] = {
+        value: v,       // valeur brute (ex : 8.3 pour la sécurité)
+        score: s,       // score de matching (0–1) vs souhait utilisateur
+        level_code,     // ex : "tres_eleve"
+        level_label,    // ex : "Très élevé"
+      };
+
+      sumScores += s;
+      countScores += 1;
     }
 
-    // 🔹 Nouveau : niveau absolu dans le quartier
-    const level_code =
-      (v == null || Number.isNaN(v))
-        ? null
-        : getAbsoluteLevelCode(cfg.critKey, v);  // cf. helper ajouté plus haut
+    // b) Budget – prix médian m² (pris en compte UNIQUEMENT si max renseigné)
+    const prix = prixMedianByIris[iris] ?? null;
+    let prixScore = null;
 
-    const level_label =
-      level_code
-        ? (LEVEL_LABELS_FR[level_code] || level_code)
-        : null;
-
-    // 🔹 On enrichit l’objet critère avec ces infos
-    perCriterion[cfg.critKey] = {
-      value: v,        // valeur brute (ex : 15 pour la sécurité)
-      score: s,        // score de matching (0–1) vs souhait utilisateur
-      level_code,      // ex : "tres_eleve"
-      level_label      // ex : "Très élevé"
-    };
-
-    sumScores += s;
-    countScores += 1;
-  }
-
-    // b) Budget – prix médian m² vs budget max
     if (budgetCrit && budgetCrit.max != null) {
       const maxBudget = Number(budgetCrit.max);
-      const prix = prixMedianByIris[iris] ?? null;
       let s = 0;
 
       if (prix == null || Number.isNaN(prix)) {
@@ -2894,15 +2900,46 @@ for (const iris of irisList) {
       } else {
         const ratio = prix / maxBudget;
         if (ratio <= 1.3) {
-          s = 1 - (ratio - 1) / 0.3; // 100% → 0% entre 100% et 130% du budget
+          // 100% → 0% entre 100% et 130% du budget
+          s = 1 - (ratio - 1) / 0.3;
         } else {
           s = 0;
         }
       }
 
-      perCriterion.prixMedianM2 = { value: prix, score: s };
+      prixScore = s;
       sumScores += s;
       countScores += 1;
+    }
+
+    // On expose TOUJOURS le prix médian, même si le budget n'était pas un critère
+    perCriterion.prixMedianM2 = {
+      value: prix,
+      score: prixScore, // null si critère non utilisé dans le matching
+    };
+
+    // c) Ajouter les critères non utilisés dans le matching (pour affichage)
+    for (const [critKey, getValueFn] of Object.entries(LEVEL_CRITERIA_GETTERS)) {
+      // déjà rempli ci-dessus si critère actif
+      if (perCriterion[critKey]) continue;
+
+      const v = getValueFn(iris);
+      const level_code =
+        (v == null || Number.isNaN(v))
+          ? null
+          : getAbsoluteLevelCode(critKey, v);
+
+      const level_label =
+        level_code
+          ? (LEVEL_LABELS_FR[level_code] || level_code)
+          : null;
+
+      perCriterion[critKey] = {
+        value: v,
+        score: null,      // important : n'entre PAS dans le matching global
+        level_code,
+        level_label,
+      };
     }
 
     const globalScore = countScores ? (sumScores / countScores) : 0;
@@ -2910,10 +2947,26 @@ for (const iris of irisList) {
     matches.push({
       code_iris: iris,
       score: globalScore,
-      scores: perCriterion
+      scores: perCriterion,
     });
   }
 
+  // 6) Tri + enrichissement des noms d’IRIS (inchangé)
+  matches.sort((a, b) => b.score - a.score);
+  const irisCodes = matches.map(m => m.code_iris);
+  const nameMap = await fetchIrisNames(irisCodes);
+
+  const enrichedMatches = matches.map(m => {
+    const names = nameMap[m.code_iris] || {};
+    return {
+      ...m,
+      nom_iris: names.nom_iris || null,
+      nom_commune: names.nom_commune || null,
+    };
+  });
+
+  return enrichedMatches;
+ 
   // 6) Tri décroissant par score global
   matches.sort((a, b) => b.score - a.score);
 
