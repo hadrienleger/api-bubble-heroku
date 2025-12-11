@@ -2971,8 +2971,8 @@ async function computeMatching(zone_recherche, criteria) {
   matches.sort((a, b) => b.score - a.score);
 
   // Enrichissement avec nom_iris + nom_commune
-  const irisCodes = matches.map(m => m.code_iris);
-  const nameMap = await fetchIrisNames(irisCodes);
+  const irisCodesForNames = matches.map(m => m.code_iris);
+  const nameMap = await fetchIrisNames(irisCodesForNames);
 
   const enrichedMatches = matches.map(m => {
     const names = nameMap[m.code_iris] || {};
@@ -2984,7 +2984,8 @@ async function computeMatching(zone_recherche, criteria) {
   });
 
   return enrichedMatches;
-}
+  }
+
 
 // ------------------------------------------------------------------
 // POST /get_iris_filtre  (version LITE : rapide, sans hydratation)
