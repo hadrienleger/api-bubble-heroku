@@ -2421,56 +2421,56 @@ function enrichCriteriaForDisplay(rawCriteria) {
 const JENKS_BOUNDS = {
   // Revenus déclarés (exemple → à adapter à tes vrais Jenks)
   mediane_rev_decl: {
-    tres_faible:  { min: 0,     max: 15000 },
-    assez_faible: { min: 15000, max: 22000 },
-    moyen:        { min: 22000, max: 28000 },
-    assez_eleve:  { min: 28000, max: 35000 },
-    tres_eleve:   { min: 35000, max: 100000 }
+    tres_faible:  { min: 0,     max: 17370 },
+    assez_faible: { min: 17380, max: 22660 },
+    moyen:        { min: 22670, max: 27960 },
+    assez_eleve:  { min: 27970, max: 37840 },
+    tres_eleve:   { min: 37860, max: 100000 }
   },
 
   // Part de logements sociaux (0–1)
   part_log_soc: {
-    tres_faible:  { min: 0.0,  max: 0.05 },
-    assez_faible: { min: 0.05, max: 0.15 },
-    moyen:        { min: 0.15, max: 0.30 },
-    assez_eleve:  { min: 0.30, max: 0.50 },
-    tres_eleve:   { min: 0.50, max: 1.00 }
+    tres_faible:  { min: 0.0,  max: 0.065 },
+    assez_faible: { min: 0.065, max: 0.2 },
+    moyen:        { min: 0.2, max: 0.409 },
+    assez_eleve:  { min: 0.41, max: 0.694 },
+    tres_eleve:   { min: 0.695, max: 1.00 }
   },
 
   // Sécurité (note sur 20)
   securite: {
-    tres_faible:  { min: 0,  max: 8 },
-    assez_faible: { min: 8,  max: 12 },
-    moyen:        { min: 12, max: 15 },
-    assez_eleve:  { min: 15, max: 17 },
-    tres_eleve:   { min: 17, max: 20 }
+    tres_faible:  { min: 0,  max: 6.8 },
+    assez_faible: { min: 6.81,  max: 9.96 },
+    moyen:        { min: 9.98, max: 11.9 },
+    assez_eleve:  { min: 11.91, max: 13.62 },
+    tres_eleve:   { min: 13.63, max: 20 }
   },
 
   // IPS des écoles primaires
   ecoles: {
-    tres_faible:  { min: 60,  max: 85 },
-    assez_faible: { min: 85,  max: 95 },
-    moyen:        { min: 95,  max: 105 },
-    assez_eleve:  { min: 105, max: 115 },
-    tres_eleve:   { min: 115, max: 140 }
+    tres_faible:  { min: 50,  max: 85.9 },
+    assez_faible: { min: 86,  max: 99.9 },
+    moyen:        { min: 100,  max: 111.9 },
+    assez_eleve:  { min: 112, max: 126.7 },
+    tres_eleve:   { min: 126.8, max: 160.9 }
   },
 
   // Note des collèges (sur 20)
   colleges: {
-    tres_faible:  { min: 0,  max: 8 },
-    assez_faible: { min: 8,  max: 11 },
-    moyen:        { min: 11, max: 13 },
-    assez_eleve:  { min: 13, max: 15 },
-    tres_eleve:   { min: 15, max: 20 }
+    tres_faible:  { min: 0,  max: 7.71 },
+    assez_faible: { min: 8,  max: 10 },
+    moyen:        { min: 10.29, max: 12 },
+    assez_eleve:  { min: 12.29, max: 14.29 },
+    tres_eleve:   { min: 14.57, max: 20 }
   },
 
   // Taux de couverture crèches (en %)
   creches: {
-    tres_faible:  { min: 0,  max: 20 },
-    assez_faible: { min: 20, max: 40 },
-    moyen:        { min: 40, max: 60 },
-    assez_eleve:  { min: 60, max: 80 },
-    tres_eleve:   { min: 80, max: 120 }
+    tres_faible:  { min: 0,  max: 17.3 },
+    assez_faible: { min: 17.4, max: 26.9 },
+    moyen:        { min: 27.1, max: 37.6 },
+    assez_eleve:  { min: 37.8, max: 52.3 },
+    tres_eleve:   { min: 53.2, max: 86.7 }
   }
 };
 
