@@ -2384,6 +2384,38 @@ const LEVEL_LABELS_FR = {
   tres_eleve: 'Très élevé'
 };
 
+// Enrichit les critères (partie "criteria" de la réponse /match)
+// avec un libellé lisible pour desired_level.
+function enrichCriteriaForDisplay(rawCriteria) {
+  if (!rawCriteria || typeof rawCriteria !== 'object') return rawCriteria;
+
+  const enriched = { ...rawCriteria };
+
+  for (const [critKey, critVal] of Object.entries(rawCriteria)) {
+    if (!critVal || typeof critVal !== 'object') continue;
+
+    const desired = critVal.desired_level;
+    let desiredLabel = null;
+
+    if (desired && typeof desired === 'string') {
+      // Utilise le mapping global LEVEL_LABELS_FR si possible
+      if (LEVEL_LABELS_FR && Object.prototype.hasOwnProperty.call(LEVEL_LABELS_FR, desired)) {
+        desiredLabel = LEVEL_LABELS_FR[desired];
+      } else {
+        // fallback : on renvoie le code brut si pas trouvé
+        desiredLabel = desired;
+      }
+    }
+
+    enriched[critKey] = {
+      ...critVal,
+      desired_level_label: desiredLabel   // ex : "Très élevé"
+    };
+  }
+
+  return enriched;
+}
+
 // Bornes Jenks en dur par critère.
 // ➜ À ADAPTER avec TES vraies valeurs.
 const JENKS_BOUNDS = {
@@ -3606,11 +3638,14 @@ app.post('/zenmap_ai/match', async (req, res) => {
       (a, b) => b.best_score - a.best_score
     );
 
+    // 3bis) Enrichir les critères pour l'affichage (libellés lisibles)
+    const displayCriteria = enrichCriteriaForDisplay(criteria);
+
     // 4) Réponse pour Bubble
     return res.json({
       success: true,
       zone_recherche,
-      criteria,
+      criteria: displayCriteria,
       communes,
       debug: {
         mode,                      // "chat" ou "quick"
