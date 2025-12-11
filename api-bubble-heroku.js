@@ -2951,7 +2951,7 @@ async function computeMatching(zone_recherche, criteria) {
     });
   }
 
-  // 6) Tri + enrichissement des noms d’IRIS (inchangé)
+// 6) Tri + enrichissement des noms d’IRIS (inchangé)
   matches.sort((a, b) => b.score - a.score);
   const irisCodes = matches.map(m => m.code_iris);
   const nameMap = await fetchIrisNames(irisCodes);
@@ -2966,25 +2966,6 @@ async function computeMatching(zone_recherche, criteria) {
   });
 
   return enrichedMatches;
- 
-  // 6) Tri décroissant par score global
-  matches.sort((a, b) => b.score - a.score);
-
-  // Enrichissement avec nom_iris + nom_commune
-  const irisCodesForNames = matches.map(m => m.code_iris);
-  const nameMap = await fetchIrisNames(irisCodesForNames);
-
-  const enrichedMatches = matches.map(m => {
-    const names = nameMap[m.code_iris] || {};
-    return {
-      ...m,
-      nom_iris: names.nom_iris || null,
-      nom_commune: names.nom_commune || null,
-    };
-  });
-
-  return enrichedMatches;
-  }
 
 
 // ------------------------------------------------------------------
