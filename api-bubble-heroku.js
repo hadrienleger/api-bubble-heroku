@@ -3021,6 +3021,37 @@ async function computeMatching(zone_recherche, criteria) {
   return enrichedMatches;
 }
 
+// Pour permettre l'envoi des criteria desired_level en empty au lieu de "null" pas considéré par Bubble comme empty
+function normalizeNullish(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase();
+    if (t === '' || t === 'null' || t === 'undefined') return null;
+  }
+  return v;
+}
+
+function sanitizeCriteria(criteria) {
+  if (!criteria || typeof criteria !== 'object') return criteria;
+
+  // Copie shallow (on ne veut pas muter l'objet original si tu le logges)
+  const out = { ...criteria };
+
+  for (const [k, obj] of Object.entries(out)) {
+    if (!obj || typeof obj !== 'object') continue;
+
+    // critères “level”
+    if ('desired_level' in obj) obj.desired_level = normalizeNullish(obj.desired_level);
+    if ('direction' in obj) obj.direction = normalizeNullish(obj.direction);
+    if ('hard_requirement' in obj) obj.hard_requirement = normalizeNullish(obj.hard_requirement);
+
+    // budget / DVF (selon ta structure)
+    if ('max' in obj) obj.max = normalizeNullish(obj.max);
+  }
+
+  return out;
+}
+
 // ------------------------------------------------------------------
 // POST /get_iris_filtre  (version LITE : rapide, sans hydratation)
 // ------------------------------------------------------------------
@@ -3604,6 +3635,7 @@ app.post('/zenmap_ai/match', async (req, res) => {
     if (criteriaOverride && typeof criteriaOverride === 'object') {
       // MODE QUICK SEARCH : on fait confiance aux critères envoyés par Bubble
       criteria = criteriaOverride;
+      criteria = sanitizeCriteria(criteria);
       mode = 'quick';
     } else {
       // MODE CHAT : on passe par l’assistant extracteur
