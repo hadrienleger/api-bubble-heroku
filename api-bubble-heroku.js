@@ -2384,6 +2384,15 @@ const LEVEL_LABELS_FR = {
   tres_eleve: 'Très élevé'
 };
 
+const DEFAULT_DIRECTIONS = {
+  securite: 'higher_better',
+  ecoles: 'higher_better',
+  colleges: 'higher_better',
+  mediane_rev_decl: 'higher_better',
+  part_log_soc: 'lower_better',
+  creches: 'higher_better'
+};
+
 // Enrichit les critères (partie "criteria" de la réponse /match)
 // avec un libellé lisible pour desired_level.
 function enrichCriteriaForDisplay(rawCriteria) {
@@ -2851,9 +2860,20 @@ async function computeMatching(zone_recherche, criteria) {
     const crit = criteria[critKey];
     if (!crit) continue;
 
-    const { desired_level, direction } = crit;
-    if (!desired_level || !direction) continue;
+    let { desired_level, direction } = crit;
+
+    // si pas de niveau demandé → critère non utilisé
+    if (!desired_level) continue;
     if (!LEVELS.includes(desired_level)) continue;
+
+    // si aucune direction n'est fournie par Bubble / l'extracteur,
+    // on applique une direction par défaut si on en a une
+    if (!direction && DEFAULT_DIRECTIONS[critKey]) {
+      direction = DEFAULT_DIRECTIONS[critKey];
+    }
+
+    // si après ça on n'a toujours pas de direction → on skip
+    if (!direction) continue;
 
     const bounds = getBoundsForCriterion(critKey);
     if (!bounds) continue;
@@ -2866,6 +2886,7 @@ async function computeMatching(zone_recherche, criteria) {
       bounds,
     });
   }
+
 
   // Budget (prix median m2) – traitement spécifique
   const budgetCrit = criteria.prixMedianM2 || null;
