@@ -3628,36 +3628,35 @@ app.post('/zenmap_ai/match', async (req, res) => {
       });
     }
 
-    let criteria;
-    let extractResult = null;
-    let mode = 'chat';
+  let criteria;
+  let extractResult = null;
+  let mode = 'chat';
 
-    if (criteriaOverride && typeof criteriaOverride === 'object') {
-      // MODE QUICK SEARCH : on fait confiance aux critères envoyés par Bubble
-      criteria = criteriaOverride;
-      criteria = sanitizeCriteria(criteria);
-      mode = 'quick';
-    } else {
-      // MODE CHAT : on passe par l’assistant extracteur
-      if (!conversation || typeof conversation !== 'string') {
-        return res.status(400).json({
-          success: false,
-          error: 'conversation manquante ou invalide (mode chat)'
-        });
-      }
+  const isQuick =
+    (typeof conversation === 'string' && conversation.trim() === 'MODE_QUICK_SEARCH') ||
+    (!conversation && criteriaOverride && typeof criteriaOverride === 'object');
 
-      // runZenmapExtractor(zone_recherche, conversation) est déjà défini plus haut
-      extractResult = await runZenmapExtractor(zone_recherche, conversation);
-
-      // L’extracteur renvoie :
-      // - soit { criteria: { ... }, ... }
-      // - soit directement { prixMedianM2: {...}, securite: {...}, ... }
-      const rawCriteria = extractResult.criteria || extractResult || {};
-
-      // On enlève zone_recherche des critères si jamais le modèle l’a recopiée
-      const { zone_recherche: zrFromExtractor, ...criteriaNoZone } = rawCriteria;
-      criteria = criteriaNoZone;
+  if (isQuick) {
+    // MODE QUICK SEARCH
+    criteria = sanitizeCriteria(criteriaOverride || {});
+    mode = 'quick';
+  } else {
+    // MODE CHAT : on passe par l’assistant extracteur
+    if (!conversation || typeof conversation !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'conversation manquante ou invalide (mode chat)'
+      });
     }
+
+    extractResult = await runZenmapExtractor(zone_recherche, conversation);
+
+    const rawCriteria = extractResult.criteria || extractResult || {};
+    const { zone_recherche: zrFromExtractor, ...criteriaNoZone } = rawCriteria;
+
+    // Optionnel mais conseillé (robustesse si l’extracteur renvoie "null" en string)
+    criteria = sanitizeCriteria(criteriaNoZone);
+  }
 
     // 2) Calcul du matching quartier par quartier
     const matches = await computeMatching(zone_recherche, criteria);
