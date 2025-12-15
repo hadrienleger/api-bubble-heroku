@@ -3632,9 +3632,12 @@ app.post('/zenmap_ai/match', async (req, res) => {
   let extractResult = null;
   let mode = 'chat';
 
+  // IMPORTANT: Bubble peut envoyer "null" (string) au lieu de null
+  const conversationClean = normalizeNullish(conversation);
+
   const isQuick =
-    (typeof conversation === 'string' && conversation.trim() === 'MODE_QUICK_SEARCH') ||
-    (!conversation && criteriaOverride && typeof criteriaOverride === 'object');
+    (typeof conversationClean === 'string' && conversationClean.trim() === 'MODE_QUICK_SEARCH') ||
+    (!conversationClean && criteriaOverride && typeof criteriaOverride === 'object');
 
   if (isQuick) {
     // MODE QUICK SEARCH
@@ -3642,14 +3645,14 @@ app.post('/zenmap_ai/match', async (req, res) => {
     mode = 'quick';
   } else {
     // MODE CHAT : on passe par l’assistant extracteur
-    if (!conversation || typeof conversation !== 'string') {
+    if (!conversationClean || typeof conversationClean !== 'string') {
       return res.status(400).json({
         success: false,
         error: 'conversation manquante ou invalide (mode chat)'
       });
     }
 
-    extractResult = await runZenmapExtractor(zone_recherche, conversation);
+    extractResult = await runZenmapExtractor(zone_recherche, conversationClean);
 
     const rawCriteria = extractResult.criteria || extractResult || {};
     const { zone_recherche: zrFromExtractor, ...criteriaNoZone } = rawCriteria;
