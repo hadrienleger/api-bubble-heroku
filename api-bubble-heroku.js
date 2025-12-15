@@ -3662,29 +3662,62 @@ app.post('/zenmap_ai/match', async (req, res) => {
     const matches = await computeMatching(zone_recherche, criteria);
 
     // 3) Regrouper par commune pour faciliter l’affichage côté Bubble
+
+    // Les critères pour lesquels on veut exposer un best_score au niveau "commune"
+    const BEST_SCORE_KEYS = [
+      'securite',
+      'ecoles',
+      'colleges',
+      'creches',
+      'mediane_rev_decl',
+      'part_log_soc',
+      'prixMedianM2',
+    ];
+
     const communesMap = new Map();
 
     for (const m of matches) {
       const nomCommune = m.nom_commune || 'Commune inconnue';
 
       if (!communesMap.has(nomCommune)) {
-        communesMap.set(nomCommune, {
+        const init = {
           nom_commune: nomCommune,
           best_score: m.score,
           nb_quartiers: 0,
-          quartiers: []
-        });
+          quartiers: [],
+        };
+
+        // Init des best_score_<crit> à partir du 1er quartier rencontré
+        for (const k of BEST_SCORE_KEYS) {
+          const s = m?.scores?.[k]?.score;
+          init[`best_score_${k}`] = (s == null ? null : s);
+        }
+
+        communesMap.set(nomCommune, init);
       }
 
       const entry = communesMap.get(nomCommune);
       entry.nb_quartiers += 1;
 
+      // best_score global (matching global)
       if (m.score > entry.best_score) {
         entry.best_score = m.score;
       }
 
+      // best_score par critère (matching du critère)
+      for (const k of BEST_SCORE_KEYS) {
+        const s = m?.scores?.[k]?.score;
+        if (s == null) continue;
+
+        const field = `best_score_${k}`;
+        if (entry[field] == null || s > entry[field]) {
+          entry[field] = s;
+        }
+      }
+
       entry.quartiers.push(m);
     }
+
 
     const communes = Array.from(communesMap.values()).sort(
       (a, b) => b.best_score - a.best_score
